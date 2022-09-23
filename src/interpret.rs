@@ -5,7 +5,7 @@ use crate::{
     tree::{NodeId, Tree},
 };
 
-/// An error encountered during runtime
+/// An error encountered during runtime. These should be few and far between, as emscript is designed to avoid a heavy runtime
 ///
 /// In future, can be used to check for things like overflowing arithmetic (for debug builds)
 #[derive(Debug, Clone)]
@@ -113,6 +113,14 @@ impl Runtime {
             Div => (self.interpret(children[0], ast, variables)?
                 / self.interpret(children[1], ast, variables)?)
             .map_err(|_| RuntimeErr::Unchecked),
+
+            Eq => (self.interpret(children[0], ast, variables)?
+                == self.interpret(children[1], ast, variables)?)
+            .map_err(|_| RuntimeErr::Unchecked),
+            Lt => todo!(),
+            Gt => todo!(),
+            Le => todo!(),
+            Ge => todo!(),
             //Assignment returns no value (much like `VariableDef`)
             Assign { name } => {
                 let rhs = self.interpret(children[0], ast, variables)?;

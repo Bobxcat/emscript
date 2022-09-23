@@ -16,59 +16,6 @@ impl ASTNode {
     pub fn new(t: ASTNodeType, context: StringContext) -> Self {
         Self { t, context }
     }
-    /*fn get_childen(&self) -> Vec<&ASTNode> {
-        use ASTNodeType::*;
-        match &self.t {
-            //Binary ops
-            Add { lhs, rhs }
-            | Sub { lhs, rhs }
-            | Mul { lhs, rhs }
-            | Div { lhs, rhs }
-            | Assign { lhs, rhs } => {
-                vec![lhs, rhs]
-            }
-            //Unary ops
-            ValueConsume { expr } => vec![expr],
-            VariableDef { val, .. } => vec![val],
-            //Childless endpoints
-            Literal { .. } | VariableRef { .. } => vec![],
-            LastValueReturn { expr_list } => expr_list.iter().collect(),
-            MethodDef { body, .. } => vec![body],
-            MethodCall { name } => todo!(),
-        }
-    }
-    fn to_tree_string(&self, indent_level: usize) -> String {
-        use ASTNodeType::*;
-        const INDENTS_PER_LEVEL: usize = 2;
-
-        let mut s = str::repeat(" ", INDENTS_PER_LEVEL * indent_level);
-
-        s += &*match &self.t {
-            Literal { val } => format!("{val}"),
-            Add { .. } => format!("Add"),
-            Sub { .. } => format!("Sub"),
-            Mul { .. } => format!("Mul"),
-            Div { .. } => format!("Div"),
-            Assign { .. } => format!("Assign"),
-            VariableRef { name } => format!("Variable Reference: {name}"),
-            VariableDef { name, .. } => format!("Variable Definition: {name}"),
-            ValueConsume { .. } => format!("Value consume"),
-            LastValueReturn { expr_list } => format!("Last value return"),
-            MethodDef {
-                name, return_type, ..
-            } => format!("Method definition: {name}() -> {return_type}"),
-            MethodCall { name } => format!("Method call: {name}"),
-            //ASTNodeType::MethodCall { name } => format!("Method call: {name}"),
-        };
-
-        s += "\n";
-
-        for c in self.get_childen() {
-            s += &c.to_tree_string(indent_level + 1);
-        }
-
-        s
-    }*/
 }
 
 impl Display for ASTNode {
@@ -80,6 +27,11 @@ impl Display for ASTNode {
             Sub { .. } => format!("Sub"),
             Mul { .. } => format!("Mul"),
             Div { .. } => format!("Div"),
+            Eq { .. } => format!("Eq"),
+            Lt { .. } => format!("Lt"),
+            Gt { .. } => format!("Gt"),
+            Le { .. } => format!("Le"),
+            Ge { .. } => format!("Ge"),
             Assign { .. } => format!("Assign"),
             VariableRef { name } => format!("Variable Reference: {name}"),
             VariableDef { name, .. } => format!("Variable Definition: {name}"),
@@ -111,6 +63,24 @@ pub enum Value {
     },
 }
 
+macro_rules! bin_op_match {
+    ($sym:tt) => {
+        //An operation between an unsized generic type (ie. `Int`, `Float`) and a sized counterpart (`Int32`, `Int64`, etc.) coerces the unsized value to the sized type
+        match (self, rhs) {
+            //Integers
+            (Int { n: n_0}, Int { n }) => Ok(Int { n: n_0 $sym n }),
+
+            (Int32 { n: n_0}, Int { n }) => Ok(Int32 { n: n_0 $sym n as i32 }),
+            (Int { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 as i32 $sym n }),
+            (Int32 { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 $sym n }),
+
+            //Other
+
+            _ => Err(()),
+        }
+    }
+}
+
 macro_rules! arithmetic_impl_for_value {
     ($trait:ident, $trait_fn:ident, $sym:tt) => {
         impl $trait for Value {
@@ -118,19 +88,7 @@ macro_rules! arithmetic_impl_for_value {
 
             fn $trait_fn(self, rhs: Self) -> Self::Output {
                 use Value::*;
-                //An operation between an unsized generic type (ie. `Int`, `Float`) and a sized counterpart (`Int32`, `Int64`, etc.) coerces the unsized value to the sized type
-                match (self, rhs) {
-                    //Integers
-                    (Int { n: n_0}, Int { n }) => Ok(Int { n: n_0 $sym n }),
-
-                    (Int32 { n: n_0}, Int { n }) => Ok(Int32 { n: n_0 $sym n as i32 }),
-                    (Int { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 as i32 $sym n }),
-                    (Int32 { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 $sym n }),
-
-                    //Other
-
-                    _ => Err(()),
-                }
+                bin_op_match!($sym)
             }
         }
     };
@@ -140,6 +98,11 @@ arithmetic_impl_for_value!(Add, add, +);
 arithmetic_impl_for_value!(Sub, sub, -);
 arithmetic_impl_for_value!(Mul, mul, *);
 arithmetic_impl_for_value!(Div, div, /);
+
+//arithmetic_impl_for_value!(PartialEq, eq, ==);
+/*arithmetic_impl_for_value!(Div, div, /);
+arithmetic_impl_for_value!(Div, div, /);
+arithmetic_impl_for_value!(Div, div, /);*/
 
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -186,6 +149,16 @@ pub enum ASTNodeType {
     Mul,
     /// `2` children
     Div,
+    /// `2` children
+    Eq,
+    /// `2` children
+    Lt,
+    /// `2` children
+    Gt,
+    /// `2` children
+    Le,
+    /// `2` children
+    Ge,
 
     //Assign
     /// Assignment of the variable `name` to the value given by this node's child

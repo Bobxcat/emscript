@@ -8,6 +8,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Void,
+    Bool,
     Int,
     Int32,
     String,
@@ -37,6 +38,7 @@ impl Display for Type {
             "{}",
             match self {
                 Type::Void => "void",
+                Type::Bool => "bool",
                 Type::Int => "integer",
                 Type::Int32 => "i32",
                 Type::String => "string",
@@ -90,8 +92,12 @@ pub enum VerificationErrorType {
 /// An `Err(_)` value is guaranteed to have at least one element
 pub fn verify<'a>(ast: &'a Tree<ASTNode>) -> Result<(), Vec<VerificationError<'a>>> {
     //Type checking
-    let mut variables = HashMap::new();
-    type_check(ast.find_head().unwrap(), ast, &mut variables)?;
+    type_check(
+        ast.find_head().unwrap(),
+        ast,
+        &mut HashMap::new(),
+        &mut HashMap::new(),
+    )?;
 
     Ok(())
 }
@@ -100,10 +106,13 @@ fn type_check<'a>(
     curr: NodeId,
     ast: &'a Tree<ASTNode>,
     variables: &mut HashMap<String, Type>,
+    methods: &mut HashMap<String, Type>,
 ) -> Result<Type, Vec<VerificationError<'a>>> {
     use ASTNodeType::*;
 
     let children = ast[curr].children.clone();
+
+    let mut type_check = |node: NodeId| type_check(node, ast, variables, methods);
 
     //DUPLICATED from `interpret` (ish)
     //For now, define everything while descending the tree
@@ -118,8 +127,8 @@ fn type_check<'a>(
         },
         //Binary ops
         Add | Sub | Mul | Div => {
-            let lhs_t = type_check(children[0], ast, variables)?;
-            let rhs_t = type_check(children[1], ast, variables)?;
+            let lhs_t = type_check(children[0])?;
+            let rhs_t = type_check(children[1])?;
 
             //`rhs` coerces into `lhs` by default
             if rhs_t.coercable_to(lhs_t) {
@@ -135,10 +144,28 @@ fn type_check<'a>(
                 )]);
             }
         }
+        Eq | Lt | Gt | Le | Ge => {
+            let lhs_t = type_check(children[0])?;
+            let rhs_t = type_check(children[1])?;
+
+            //`rhs` coerces into `lhs` by default
+            //TODO: Seperate restraints for `cmp` and `coerce` (or `arithmetic`)
+            if rhs_t.coercable_to(lhs_t) {
+                Type::Bool
+            } else {
+                return Err(vec![VerificationError::new(
+                    &ast[children[1]].data,
+                    VerificationErrorType::MismatchedTypes {
+                        expected: lhs_t,
+                        given: rhs_t,
+                    },
+                )]);
+            }
+        }
         //Unlike binary ops, `Assign` returns `Void` (but still needs type coercability)
         Assign { name } => {
+            let rhs_t = type_check(children[0])?;
             let lhs_t = variables[name];
-            let rhs_t = type_check(children[0], ast, variables)?;
 
             //When assigning, `rhs` coerces into `lhs`
             if rhs_t.coercable_to(lhs_t) {
@@ -165,27 +192,30 @@ fn type_check<'a>(
         }
         //VariableDef acts like `Assign` in terms of
         VariableDef { name } => {
-            let val_t = type_check(children[0], ast, variables)?;
+            let val_t = type_check(children[0])?;
             variables.insert(name.to_string(), val_t);
             Type::Void
         }
         //By definition, ValueConsume returns `Void`. Still need to check children though
         ValueConsume => {
-            type_check(children[0], ast, variables)?;
+            type_check(children[0])?;
             Type::Void
         }
         LastValueReturn => {
             let mut t = Type::Void;
             for c in children {
-                t = type_check(c, ast, variables)?;
+                t = type_check(c)?;
             }
             t
         }
         //Method definitions have no return type. Still need to check children
-        MethodDef { .. } => {
-            type_check(children[0], ast, variables)?;
+        MethodDef {
+            name, return_type, ..
+        } => {
+            type_check(children[0])?;
+            methods.insert(name.clone(), *return_type);
             Type::Void
         }
-        MethodCall { name } => todo!(),
+        MethodCall { name } => methods[name],
     })
 }

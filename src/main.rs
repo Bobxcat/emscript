@@ -28,9 +28,12 @@ fn main() {
     let tokens = tokens.unwrap();
 
     //Build AST
-    let ast = parse(tokens);
-    if let Err(e) = ast {
-        println!("AST parsing error encountered");
+    let ast = parse(tokens.clone());
+    if let Err(_e) = ast {
+        println!(
+            "AST parsing error encountered\n==Tokens==\n{:#?}\n=========",
+            tokens
+        );
         return;
     }
     let ast = ast.unwrap();
@@ -41,7 +44,7 @@ fn main() {
     if let Err(e) = verify(&ast) {
         println!("Errors encountered verifying AST:\n");
         for e in e {
-            println!("{e}");
+            println!("{e}\n");
         }
         return;
     }
