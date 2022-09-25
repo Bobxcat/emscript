@@ -10,11 +10,24 @@ use crate::verify::Type;
 pub struct ASTNode {
     pub t: ASTNodeType,
     pub context: StringContext,
+    /// The depth of this node in terms of its scope
+    ///
+    /// Increased by things such as:
+    /// * Method declarations
+    /// * LastValueReturn
+    ///
+    /// Not increased by things like:
+    /// * ValueConsume
+    pub scope_depth: usize,
 }
 
 impl ASTNode {
     pub fn new(t: ASTNodeType, context: StringContext) -> Self {
-        Self { t, context }
+        Self {
+            t,
+            context,
+            scope_depth: 0,
+        }
     }
 }
 
@@ -23,24 +36,38 @@ impl Display for ASTNode {
         use ASTNodeType::*;
         let s = &*match &self.t {
             Literal { val } => format!("{val}"),
-            Add { .. } => format!("Add"),
-            Sub { .. } => format!("Sub"),
-            Mul { .. } => format!("Mul"),
-            Div { .. } => format!("Div"),
-            Eq { .. } => format!("Eq"),
-            Lt { .. } => format!("Lt"),
-            Gt { .. } => format!("Gt"),
-            Le { .. } => format!("Le"),
-            Ge { .. } => format!("Ge"),
+            Add => format!("Add"),
+            Sub => format!("Sub"),
+            Mul => format!("Mul"),
+            Div => format!("Div"),
+            Eq => format!("Eq"),
+            Ne => format!("Ne"),
+            Lt => format!("Lt"),
+            Gt => format!("Gt"),
+            Le => format!("Le"),
+            Ge => format!("Ge"),
             Assign { .. } => format!("Assign"),
-            VariableRef { name } => format!("Variable Reference: {name}"),
-            VariableDef { name, .. } => format!("Variable Definition: {name}"),
+            VariableRef { name } => format!("Var: {name}"),
+            VariableDef { name, .. } => format!("Var Def: {name}"),
             ValueConsume { .. } => format!("Value consume"),
             LastValueReturn { .. } => format!("Last value return"),
             MethodDef {
-                name, return_type, ..
-            } => format!("Method definition: {name}() -> {return_type}"),
+                name,
+                return_type,
+                inputs,
+                ..
+            } => {
+                let inputs_string = {
+                    let mut all_inputs = Vec::new();
+                    for (t, name) in inputs {
+                        all_inputs.push(format!("{t} {name}"));
+                    }
+                    all_inputs.join(", ")
+                };
+                format!("fn {name}({inputs_string}) -> {return_type}")
+            }
             MethodCall { name } => format!("Method call: {name}"),
+            IfCondition => format!("If statement"),
             //ASTNodeType::MethodCall { name } => format!("Method call: {name}"),
         };
         write!(f, "{}", s)
@@ -51,28 +78,24 @@ impl Display for ASTNode {
 pub enum Value {
     /// A value without a value
     Void,
+    Bool(bool),
     /// An integer of unknown size (defaults to i32, stored as i128 until implicit typing is figured out)
-    Int {
-        n: i128,
-    },
-    Int32 {
-        n: i32,
-    },
-    String {
-        s: String,
-    },
+    Int(i128),
+    Int32(i32),
+    String(String),
 }
 
 macro_rules! bin_op_match {
-    ($sym:tt) => {
+    ($lhs:ident, $rhs:ident, $sym:tt) => {
         //An operation between an unsized generic type (ie. `Int`, `Float`) and a sized counterpart (`Int32`, `Int64`, etc.) coerces the unsized value to the sized type
-        match (self, rhs) {
+        //match (self, rhs) {
+        match ($lhs, $rhs) {
             //Integers
-            (Int { n: n_0}, Int { n }) => Ok(Int { n: n_0 $sym n }),
+            (Int(lhs), Int(rhs)) => Ok(Int(lhs $sym rhs)),
 
-            (Int32 { n: n_0}, Int { n }) => Ok(Int32 { n: n_0 $sym n as i32 }),
-            (Int { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 as i32 $sym n }),
-            (Int32 { n: n_0}, Int32 { n }) => Ok(Int32 { n: n_0 $sym n }),
+            (Int32(lhs), Int(rhs)) => Ok(Int32(lhs $sym rhs as i32)),
+            (Int(lhs), Int32(rhs)) => Ok(Int32(lhs as i32 $sym rhs)),
+            (Int32(lhs), Int32(rhs)) => Ok(Int32(lhs $sym rhs )),
 
             //Other
 
@@ -88,10 +111,28 @@ macro_rules! arithmetic_impl_for_value {
 
             fn $trait_fn(self, rhs: Self) -> Self::Output {
                 use Value::*;
-                bin_op_match!($sym)
+                bin_op_match!(self, rhs, $sym)
             }
         }
     };
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use Value::*;
+        match (self, other) {
+            //Integers
+            (Int(lhs), Int(rhs)) => Some(lhs.cmp(rhs)),
+
+            (Int32(lhs), Int(rhs)) => Some(lhs.cmp(&((*rhs) as i32))),
+            (Int(lhs), Int32(rhs)) => Some(((*lhs) as i32).cmp(rhs)),
+            (Int32(lhs), Int32(rhs)) => Some(lhs.cmp(rhs)),
+            //Bool
+            (Bool(lhs), Bool(rhs)) => Some(lhs.cmp(rhs)),
+            //...
+            _ => None,
+        }
+    }
 }
 
 arithmetic_impl_for_value!(Add, add, +);
@@ -99,19 +140,15 @@ arithmetic_impl_for_value!(Sub, sub, -);
 arithmetic_impl_for_value!(Mul, mul, *);
 arithmetic_impl_for_value!(Div, div, /);
 
-//arithmetic_impl_for_value!(PartialEq, eq, ==);
-/*arithmetic_impl_for_value!(Div, div, /);
-arithmetic_impl_for_value!(Div, div, /);
-arithmetic_impl_for_value!(Div, div, /);*/
-
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use Value::*;
         let s = match self {
             Void => format!("Void()"),
-            Int { n } => format!("Int[?]({n})"),
-            Int32 { n } => format!("Int32({n})"),
-            String { s } => format!("String({s})"),
+            Bool(b) => format!("Bool({b})"),
+            Int(n) => format!("Int[?]({n})"),
+            Int32(n) => format!("Int32({n})"),
+            String(s) => format!("String({s})"),
         };
 
         write!(f, "{}", s)
@@ -135,11 +172,20 @@ pub enum ASTNodeType {
     /// The definition for a method. The body of the code is stored as a child of this node
     ///
     /// `1` child
-    MethodDef { name: String, return_type: Type },
+    MethodDef {
+        name: String,
+        inputs: Vec<(Type, String)>,
+        return_type: Type,
+    },
     /// Represents a method call being made
     ///
     /// `0+` children, 1 for each parameter
     MethodCall { name: String },
+    /// Represents an `if` statement
+    ///
+    /// `2` children, first is conditional (evaluates to bool), second is body
+    IfCondition,
+
     //Binary ops
     /// `2` children
     Add,
@@ -151,6 +197,8 @@ pub enum ASTNodeType {
     Div,
     /// `2` children
     Eq,
+    /// `2` children
+    Ne,
     /// `2` children
     Lt,
     /// `2` children
@@ -183,6 +231,8 @@ pub struct StringContext {
     pub raw_span: Range<usize>,
     /// The index of the start of the token on the line it started on
     pub index_in_line: usize,
+    /// The index of the line on which the span starts
+    pub line_index: usize,
     /// The line containing the start of the token
     pub line: String,
 }
@@ -215,6 +265,7 @@ impl StringContext {
         Self {
             raw_span,
             index_in_line,
+            line_index,
             line,
         }
     }
@@ -222,6 +273,7 @@ impl StringContext {
         Self {
             raw_span: Range { start: 0, end: 0 },
             index_in_line: 0,
+            line_index: 0,
             line: String::new(),
         }
     }
@@ -231,7 +283,13 @@ impl StringContext {
 
         let pointer = "-".repeat(EXTRA_WHITESPACE + self.index_in_line) + "^";
 
-        format!("{}{}\n{}", " ".repeat(EXTRA_WHITESPACE), self.line, pointer)
+        format!(
+            "line {}\n{}{}\n{}",
+            self.line_index + 1,
+            " ".repeat(EXTRA_WHITESPACE),
+            self.line,
+            pointer
+        )
     }
 }
 

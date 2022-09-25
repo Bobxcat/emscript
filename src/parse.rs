@@ -42,11 +42,13 @@ pomelo! {
     %type input Tree<ASTNode>;
     %type expr_seq Vec<PrimNode<ASTNode>>;
     %type expr_list Vec<PrimNode<ASTNode>>;
+    %type var_dec_list Vec<(Type, String)>;
     %type expr PrimNode<ASTNode>;
 
     %type Int i128;
     %type Int32 i32;
     %type String String;
+    %type Bool bool;
     %type Ident String;
     %type MethodCallStart String;
     %type TypeDec Type;
@@ -59,7 +61,7 @@ pomelo! {
     //Assign is `right` so that `a = b = 1` is possible
     %nonassoc Semicolon;
     %right Assign;
-    %left Lt Gt Le Ge Eq;
+    %left Lt Gt Le Ge Eq Ne;
     %left Add Sub;
     %left Mul Div;
 
@@ -72,23 +74,42 @@ pomelo! {
     expr_seq ::= expr_seq(mut L) expr(A) { L.push(A); L }
 
     //A *list* of expressions is a comma-seperated list of expressions (such as inputs to a method call)
-    // expr_list ::= expr(A) { vec![A] }
-    // expr_list ::= expr_list(mut L) Comma expr(A) { L.push(A); L }
+    expr_list ::= expr(A) { vec![A] }
+    expr_list ::= expr_list(mut L) Comma expr(A) { L.push(A); L }
+
+    //A list of variable declarations is a comma-seperated list of pairs of `[type_name], [variable_name]` (such as: `bool a, bool b, i32 c`)
+    var_dec_list ::= TypeDec((_, t)) Ident((_, name)) { vec![(t, name)] }
+    var_dec_list ::= var_dec_list(mut L) Comma TypeDec((_, t)) Ident((_, name)) { L.push((t, name)); L }
 
     //Methods
 
     //Declaration (body is *not* just any expression)
     expr ::= Fn(ctx) MethodCallStart((_ctx, s)) RParen LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::Void }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![body])
     }
     expr ::= Fn(ctx) MethodCallStart((_, s)) RParen Arrow TypeDec((_, return_type)) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type, inputs: vec![] }, ctx, vec![body])
+    }
+    expr ::= Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen LBracket expr_seq(L) RBracket {
+        let body = list_to_last_value_return(L);
+        new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types }, ctx, vec![body])
+    }
+    expr ::= Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow TypeDec((_, return_type)) LBracket expr_seq(L) RBracket {
+        let body = list_to_last_value_return(L);
+        new_node(MethodDef { name: s, return_type, inputs: input_types }, ctx, vec![body])
     }
 
     //Calling
     expr ::= MethodCallStart((ctx, s)) RParen { new_node(MethodCall { name: s }, ctx, vec![]) };
+    expr ::= MethodCallStart((ctx, s)) expr_list(inputs) RParen { new_node(MethodCall { name: s }, ctx, inputs) };
+
+    //Conditionals
+    expr ::= If(ctx) expr(condition) LBracket expr_seq(L) RBracket {
+        let body = list_to_last_value_return(L);
+        new_node(IfCondition, ctx, vec![condition, body])
+    }
 
     //Adding scopes and enclosing with brackets
     expr ::= LBracket expr_seq(L) RBracket {
@@ -96,9 +117,10 @@ pomelo! {
     };
 
     //Literals
-    expr ::= Int((ctx, n)) { new_node(Literal { val: Value::Int { n } }, ctx, vec![]) }
-    expr ::= Int32((ctx, n)) { new_node(Literal { val: Value::Int32 { n } }, ctx, vec![]) }
-    expr ::= String((ctx, s)) { new_node(Literal { val: Value::String { s } }, ctx, vec![]) }
+    expr ::= Int((ctx, n)) { new_node(Literal { val: Value::Int(n) }, ctx, vec![]) }
+    expr ::= Int32((ctx, n)) { new_node(Literal { val: Value::Int32(n) }, ctx, vec![]) }
+    expr ::= String((ctx, s)) { new_node(Literal { val: Value::String(s) }, ctx, vec![]) }
+    expr ::= Bool((ctx, b)) { new_node(Literal { val: Value::Bool(b) }, ctx, vec![]) }
 
     //Identifiers
     expr ::= Ident((ctx, s)) { new_node(VariableRef { name: s }, ctx, vec![]) };
@@ -113,7 +135,9 @@ pomelo! {
     expr ::= expr(B) Sub(ctx) expr(C) { new_node(Sub, ctx, vec![B, C]) };
     expr ::= expr(B) Mul(ctx) expr(C) { new_node(Mul, ctx, vec![B, C]) };
     expr ::= expr(B) Div(ctx) expr(C) { new_node(Div, ctx, vec![B, C]) };
+    //Cmp
     expr ::= expr(B) Eq(ctx) expr(C) { new_node(Eq, ctx, vec![B, C]) };
+    expr ::= expr(B) Ne(ctx) expr(C) { new_node(Ne, ctx, vec![B, C]) };
     expr ::= expr(B) Lt(ctx) expr(C) { new_node(Lt, ctx, vec![B, C]) };
     expr ::= expr(B) Gt(ctx) expr(C) { new_node(Gt, ctx, vec![B, C]) };
     expr ::= expr(B) Le(ctx) expr(C) { new_node(Le, ctx, vec![B, C]) };
@@ -126,6 +150,7 @@ use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     prim_tree::PrimNode,
     tree::Tree,
+    verify::Type,
 };
 
 pub fn parse(tokens: Vec<Token>) -> Result<Tree<ASTNode>, ()> {

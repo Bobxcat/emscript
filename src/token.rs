@@ -13,11 +13,12 @@ enum TokenType {
     Div,
     Assign,
     //Cmp
+    Eq,
+    Ne,
     Lt,
     Gt,
     Le,
     Ge,
-    Eq,
     //Types
     Int,
     Int32,
@@ -25,10 +26,13 @@ enum TokenType {
     Ident,
     MethodCallStart,
     /// A declaration which represents an explicit type
-    TypeDec(Type),
+    // TypeDec(Type),
     //Keywords
-    Let, //`let`
-    Fn,  //`fn`
+    // Let, //`let`
+    // Fn, //`fn`
+    // If, //`if`
+    // True,  //`true`
+    // False, //`false`
     //Misc
     LParen,
     RParen,
@@ -65,14 +69,25 @@ impl TokenType {
                 ))
             }
             TokenType::String => Token::String((ctx, text.to_string())),
-            TokenType::Ident => Token::Ident((ctx, text.to_string())),
+            TokenType::Ident => {
+                //Check for "special identifiers", which will make this become a specific node (such as `bool` -> Token::TypeDec(Bool))
+                match text {
+                    //Types and special literals
+                    "i32" => Token::TypeDec((ctx, Type::Int32)),
+                    "bool" => Token::TypeDec((ctx, Type::Bool)),
+                    "true" => Token::Bool((ctx, true)),
+                    "false" => Token::Bool((ctx, false)),
+                    //Other keywords
+                    "let" => Token::Let(ctx),
+                    "fn" => Token::Fn(ctx),
+                    "if" => Token::If(ctx),
+                    // "return" => Token::Return(ctx),
+                    _ => Token::Ident((ctx, text.to_string())),
+                }
+            }
 
             //Trivial tokens (only needing a context)
 
-            //Keywords
-            TokenType::Let => Token::Let(ctx),
-            TokenType::Fn => Token::Fn(ctx),
-            TokenType::TypeDec(t) => Token::TypeDec((ctx, t)),
             //Ops
             TokenType::Add => Token::Add(ctx),
             TokenType::Sub => Token::Sub(ctx),
@@ -81,6 +96,7 @@ impl TokenType {
             TokenType::Assign => Token::Assign(ctx),
             //Cmp
             TokenType::Eq => Token::Eq(ctx),
+            TokenType::Ne => Token::Ne(ctx),
             TokenType::Lt => Token::Lt(ctx),
             TokenType::Gt => Token::Gt(ctx),
             TokenType::Le => Token::Le(ctx),
@@ -108,10 +124,16 @@ lazy_static! {
         //Define the regex for all tokens
         //Note that conflicts are resolved by the latest getting priority
         LexerBuilder::new()
+            //Basic type literals
+            .token(r"[-+]?[0-9]+", Int)
+            .token(r"[-+]?[0-9]+i32", Int32)
+            //.token(r"[-+]?[0-9]+\.[0-9]*", Float)
+
             //Identifiers
-            .token(r"[[:alpha:]_]+", Ident)
+            .token(r"[[:alpha:]_][[:alnum:]_]*", Ident)
 
             //Operators and such
+            .token(r"=", Assign)
             //Arithmetic
             .token(r"\+", Add)
             .token(r"-", Sub)
@@ -119,6 +141,7 @@ lazy_static! {
             .token(r"/", Div)
             //Cmp
             .token(r"==", Eq)
+            .token(r"!=", Ne)
             .token(r"<", Lt)
             .token(r">", Gt)
             .token(r"<=", Le)
@@ -129,19 +152,10 @@ lazy_static! {
             .token(r"[;]", Semicolon)
             .token(r"[{]", LBracket)
             .token(r"[}]", RBracket)
-            .token(r"=", Assign)
             .token(r",", Comma)
 
             //Keywords
-            .token(r"let", Let)
-            .token(r"fn", Fn)
             .token(r"->", Arrow)
-            .token(r"i32", TypeDec(Type::Int32))
-
-            //Basic type literals
-            .token(r"[-+]?[0-9]+", Int)
-            .token(r"[-+]?[0-9]+i32", Int32)
-            //.token(r"[-+]?[0-9]+\.[0-9]*", Float)
 
             //Strings
             .token(r#"".*""#, String)
