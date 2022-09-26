@@ -3,6 +3,7 @@ use std::fmt::Display;
 use crate::{
     ast::{ASTNode, ASTNodeType, Value},
     tree::{NodeId, Tree, TreeError},
+    verify::Type,
 };
 
 /// Represents a node in an AST for *Rust* code
@@ -12,8 +13,19 @@ pub enum RASTNode {
     ///`0+` children
     LastValueReturn,
 
-    MethodCall,
-    MethodDef,
+    /// Represents a method call being made
+    ///
+    /// `0+` children, 1 for each parameter
+    MethodCall { name: String },
+
+    /// The definition for a method. The body of the code is stored as a child of this node
+    ///
+    /// `1` child
+    MethodDef {
+        name: String,
+        inputs: Vec<(Type, String)>,
+        return_type: Type,
+    },
 
     //Trivial
     /// A literal value
@@ -33,6 +45,12 @@ impl Display for RASTNode {
             RASTNode::Add => format!("Add"),
             RASTNode::Sub => format!("Sub"),
             RASTNode::LastValueReturn => format!("Last value return"),
+            RASTNode::MethodCall { name } => format!("{name}()"),
+            RASTNode::MethodDef {
+                name,
+                inputs,
+                return_type,
+            } => format!("{name}()"),
         };
         write!(f, "{}", s)
     }
@@ -41,23 +59,23 @@ impl Display for RASTNode {
 pub fn rast_to_string(rast: &Tree<RASTNode>) -> String {
     format!(
         r##"
-    #![no_std]
-    #![allow(unused_braces)]
-    
-    // dev profile
-    #[cfg(debug_assertions)]
-    extern crate panic_semihosting;
-    
-    // release profile
-    #[cfg(not(debug_assertions))]
-    extern crate panic_halt;
+#![no_std]
+#![allow(unused_braces)]
 
-    fn main() {{
+// dev profile
+#[cfg(debug_assertions)]
+extern crate panic_semihosting;
 
-    }}
+// release profile
+#[cfg(not(debug_assertions))]
+extern crate panic_halt;
 
-    {}
-    "##,
+fn main() {{
+
+}}
+
+{}
+"##,
         //#[no_mangle] extern "C" fn foo(my_args: i32) -> ReturnType
         rast_to_string_recurse(rast, rast.find_head().expect("Could not find AST head"))
     )
@@ -67,11 +85,15 @@ fn rast_to_string_recurse(rast: &Tree<RASTNode>, curr: NodeId) -> String {
     let children = rast[curr].children.clone();
 
     /// Calls this recursive method on a given node
-    macro_rules! child {
-        ($node:expr) => {
-            rast_to_string_recurse(rast, $node)
-        };
-    }
+    // macro_rules! child {
+    //     ($node:expr) => {
+    //         rast_to_string_recurse(rast, $node)
+    //     };
+    // }
+    let child_strings: Vec<_> = children
+        .into_iter()
+        .map(|c| rast_to_string_recurse(rast, c))
+        .collect();
 
     match &rast[curr].data {
         RASTNode::Literal(val) => match val {
@@ -81,14 +103,25 @@ fn rast_to_string_recurse(rast: &Tree<RASTNode>, curr: NodeId) -> String {
             Value::Int32(n) => format!("{n}i32"),
             Value::String(s) => format!("{s}"),
         },
-        RASTNode::Add => format!("{} + {}", child!(children[0]), child!(children[1])),
-        RASTNode::Sub => format!("{} - {}", child!(children[0]), child!(children[1])),
+        RASTNode::Add => format!("{} + {}", child_strings[0], child_strings[1]),
+        RASTNode::Sub => format!("{} - {}", child_strings[0], child_strings[1]),
         RASTNode::LastValueReturn => {
-            let mut children_strings = Vec::new();
-            for c in children {
-                children_strings.push(child!(c));
-            }
-            format!("{{{}}}", children_strings.join(""))
+            format!("{{{}}}", child_strings.join(""))
+        }
+        RASTNode::MethodCall { name } => format!("{name}()"),
+        RASTNode::MethodDef {
+            name,
+            inputs,
+            return_type,
+        } => {
+            let inputs_str = inputs
+                .clone()
+                .into_iter()
+                .map(|(t, name)| format!("{t}: {name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let body_str = child_strings.join("\n");
+            format!("fn name({inputs_str}) -> {return_type} {{{body_str}}}")
         }
     }
 }
