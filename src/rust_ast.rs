@@ -103,10 +103,10 @@ fn rast_to_string_recurse(rast: &Tree<RASTNode>, curr: NodeId) -> String {
             Value::Int32(n) => format!("{n}i32"),
             Value::String(s) => format!("{s}"),
         },
-        RASTNode::Add => format!("{} + {}", child_strings[0], child_strings[1]),
-        RASTNode::Sub => format!("{} - {}", child_strings[0], child_strings[1]),
+        RASTNode::Add => format!("({} + {})", child_strings[0], child_strings[1]),
+        RASTNode::Sub => format!("({} - {})", child_strings[0], child_strings[1]),
         RASTNode::LastValueReturn => {
-            format!("{{{}}}", child_strings.join(""))
+            format!("{{{}}}", child_strings.join(" "))
         }
         RASTNode::MethodCall { name } => format!("{name}()"),
         RASTNode::MethodDef {
@@ -121,7 +121,7 @@ fn rast_to_string_recurse(rast: &Tree<RASTNode>, curr: NodeId) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             let body_str = child_strings.join("\n");
-            format!("fn name({inputs_str}) -> {return_type} {{{body_str}}}")
+            format!("extern \"C\" fn {name}({inputs_str}) -> {return_type} {{{body_str}}}")
         }
     }
 }
@@ -163,7 +163,11 @@ fn ast_to_rast_substitution(
             name,
             inputs,
             return_type,
-        } => todo!(),
+        } => add_child!(RASTNode::MethodDef {
+            name: name.clone(),
+            inputs: inputs.clone(),
+            return_type: return_type.clone()
+        }),
         ASTNodeType::MethodCall { name } => todo!(),
         ASTNodeType::IfCondition => todo!(),
         ASTNodeType::Mul => todo!(),
