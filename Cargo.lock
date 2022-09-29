@@ -283,6 +283,7 @@ dependencies = [
  "lazy_static",
  "pomelo",
  "regex-lexer",
+ "wasm-ast",
  "wasmer",
  "wasmer-compiler-cranelift",
  "wasmer-engine-universal",
@@ -968,6 +969,15 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "wasm-ast"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9258d94c440eff100c779cdaf93ddf2a808ade6f28a95735bc58b6f8fe624f05"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "wasm-bindgen"

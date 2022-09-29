@@ -71,10 +71,8 @@ extern crate panic_semihosting;
 extern crate panic_halt;
 
 fn main() {{
-
-}}
-
 {}
+}}
 "##,
         //#[no_mangle] extern "C" fn foo(my_args: i32) -> ReturnType
         rast_to_string_recurse(rast, rast.find_head().expect("Could not find AST head"))
