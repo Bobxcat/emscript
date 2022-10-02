@@ -11,6 +11,22 @@ pub enum TreeError {
     ChildNotFound { node_id: NodeId, child_index: usize },
 }
 
+impl std::fmt::Display for TreeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TreeError::NodeNotFound { node_id } => format!("NodeNotFound {node_id:?}"),
+            TreeError::ChildrenExpected { node_id } => format!("ChildrenExpected {node_id:?}"),
+            TreeError::ChildNotFound {
+                node_id,
+                child_index,
+            } => format!("ChildNotFound for `{node_id:?}`: `{child_index}`"),
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::error::Error for TreeError {}
+
 //This mostly just makes recursion and such harder, though
 #[derive(Debug, Clone)]
 pub struct Tree<T> {

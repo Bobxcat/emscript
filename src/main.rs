@@ -18,6 +18,7 @@ extern crate anyhow;
 extern crate wasmer_engine_universal;
 
 mod ast;
+mod c_ast;
 mod compile;
 mod interpret;
 mod parse;
@@ -53,32 +54,25 @@ fn main() {
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast).unwrap();
 
-    //Verify AST
-    /*if let Err(e) = runtime.verify(&ast) {
-        println!("Errors encountered verifying AST:\n");
-        for e in e {
-            println!("{e}\n");
-        }
-        return;
-    }*/
+    // Verify AST
+    // if let Err(e) = runtime.verify(&ast) {
+    // println!("Errors encountered verifying AST:\n");
+    // for e in e {
+    // println!("{e}\n");
+    // }
+    // return;
+    // }
 
     //Compile the AST to rust
 
     runtime.setup_target_dir_relative("./em_target/").unwrap();
 
-    let rust_dir = runtime.compile_to_rust(&ast).unwrap();
-    println!("rust_dir: {}", rust_dir.display());
+    let c_dir = runtime.compile_to_c(&ast).unwrap();
+    println!("c_dir: {}", c_dir.display());
 
-    let wasm_path = runtime.compile_rust().unwrap();
+    let wasm_path = runtime.compile_c().unwrap();
     println!("wasm_dir: {}\n\n", wasm_path.display());
 
     println!("Running {}\n", wasm_path.display());
     runtime.run_wasm(wasm_path).unwrap();
-
-    //Interpret the AST
-    // let interpret_res = runtime.interpret_ast(&ast);
-    // match interpret_res {
-    //     Ok(val) => println!("Output: {}", val),
-    //     Err(err) => println!("Runtime Error Encountered:\n{err}"),
-    // }
 }

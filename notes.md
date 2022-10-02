@@ -3,6 +3,7 @@ EMScript:
 * Explicit mutability (like Rust) and well-defined reference vs. value (also like Rust)
 * Relatively performant
 * Structs/traits (like Rust). Probably also generics, down the road
+* Explicit clone for many objects
 
 Maybe:
 * Garbage Collection

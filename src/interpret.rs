@@ -9,10 +9,11 @@ use std::{
     str::FromStr,
 };
 
-use wasmer::{imports, Instance, Module, Store};
+use wasmer::{imports, Instance, MemoryType, Module, Store};
 
 use crate::{
     ast::{ASTNode, StringContext, Value},
+    c_ast::{ast_to_cast, cast_to_string},
     rust_ast::{ast_to_rast, rast_to_string},
     tree::{NodeId, Tree},
     verify::{Type, VerificationError},
@@ -89,7 +90,8 @@ pub struct Runtime {
     /// Each method declaration stored as a pair of (method_name, (method_declaration, method_body))
     pub(crate) method_declarations: HashMap<String, MethodInfo>, //TODO: Define external methods, Rc<state>?
     target_path: PathBuf,
-    rust_dir: PathBuf,
+    // rust_dir: PathBuf,
+    c_dir: PathBuf,
     wasm_dir: PathBuf,
 }
 
@@ -100,7 +102,8 @@ impl Runtime {
         Self {
             method_declarations: HashMap::new(),
             target_path: "".into(),
-            rust_dir: "".into(),
+            // rust_dir: "".into(),
+            c_dir: "".into(),
             wasm_dir: "".into(),
         }
     }
@@ -137,7 +140,8 @@ impl Runtime {
     {
         let target_dir: &Path = target_dir.as_ref();
         self.target_path = target_dir.to_path_buf();
-        self.rust_dir = self.target_path.join("rust/");
+        // self.rust_dir = self.target_path.join("rust/");
+        self.c_dir = self.target_path.join("c/");
         self.wasm_dir = self.target_path.join("wasm/");
 
         let mut dir_builder = DirBuilder::new();
@@ -149,127 +153,88 @@ impl Runtime {
                 dir_builder.create($path)?
             };
         }
-        //Rust
+        // //Rust
+        // {
+        //     //The dir_builder is recursive, but still do each directory individually to make sure
+        //     create_dir!(&self.rust_dir);
+        //     create_dir!(&self.rust_dir.join("src/"));
+        // }
         {
             //The dir_builder is recursive, but still do each directory individually to make sure
-            create_dir!(&self.rust_dir);
-            create_dir!(&self.rust_dir.join("src/"));
+            create_dir!(&self.c_dir)
         }
         //Wasm
         {
             create_dir!(&self.wasm_dir)
         }
         println!(
-            "Setup target directories:\nTarget dir: `{}`\nRust dir: `{}`\nWASM dir: `{}`\n\n",
+            "Setup target directories:\nTarget dir: `{}`\nC dir: `{}`\nWASM dir: `{}`\n\n",
             self.target_path.display(),
-            self.rust_dir.display(),
+            self.c_dir.display(),
             self.wasm_dir.display()
         );
 
         Ok(())
     }
-    /// Compiles the given `ast` into a rust project. The root of that project is returned (which contains a `Cargo.toml` and `src/`)
-    pub fn compile_to_rust(&self, ast: &Tree<ASTNode>) -> Result<PathBuf, std::io::Error> {
-        let src_dir = self.rust_dir.join("src/");
 
+    /// Compiles the given `ast` into a c project. The root of that project is returned (which contains a `main.c`)
+    pub fn compile_to_c(&self, ast: &Tree<ASTNode>) -> Result<PathBuf, anyhow::Error> {
         /// A macro which lets you create files more easily (from the root of the generated proj)
         macro_rules! create_file_root {
             ($path:expr) => {
-                File::create(self.rust_dir.join($path))?
+                File::create(self.c_dir.join($path))?
             };
             ($path:expr, $text:expr) => {{
-                let mut f = File::create(self.rust_dir.join($path))?;
+                let mut f = File::create(self.c_dir.join($path))?;
                 f.write_all($text)?;
                 f
             }};
         }
-        /// A macro which lets you create files more easily (from the `src` folder of the generated proj)
-        macro_rules! create_file_src {
-            ($path:expr) => {
-                File::create(src_dir.join($path))?
-            };
-            ($path:expr, $text:expr) => {{
-                let mut f = File::create(src_dir.join($path))?;
-                f.write_all($text)?;
-                f
-            }};
-        }
-        //Cargo.toml
+
+        //main.c
         {
-            println!("Creating `{}`", self.rust_dir.join("Cargo.toml").display());
-
-            let cargo_toml = format!(
-                r##"
-            [package]
-            name = "{GENERATED_PROJ_NAME}"
-            version = "0.1.0"
-            edition = "2021"
-            
-            [dependencies]
-            panic-semihosting = "0.6.0"
-            panic-halt = "0.2.0"
-            "##
-            );
-            create_file_root!("Cargo.toml", cargo_toml.as_bytes());
-        }
-        //main.rs
-        {
-            println!("Creating `{}`", src_dir.join("main.rs").display());
-
-            let rust_ast = ast_to_rast(ast);
-            println!("Generated Rust AST:\n{}", rust_ast);
-
-            let main = rast_to_string(&rust_ast);
-
-            create_file_src!("main.rs", main.as_bytes());
+            let main_cast = ast_to_cast(ast)?;
+            let main_txt = cast_to_string(&main_cast);
+            create_file_root!("main.c", main_txt.as_bytes());
         }
 
-        println!("\n");
-        Ok(self.rust_dir.to_path_buf())
+        Ok(self.c_dir.to_path_buf())
     }
 
-    /// Using a generated rust project, compile into WASM and return the path to the wasm file which was generated (and which is ready to be run)
-    pub fn compile_rust(&self) -> Result<PathBuf, std::io::Error> {
-        // let rust_src_dir = self.target_path.join("rust/src/");
-
-        let wasm_dir = self.target_path.join("wasm/");
-
-        //Call `cargo`
+    pub fn compile_c(&self) -> Result<PathBuf, std::io::Error> {
+        //Call 'clang'
         {
-            println!("Running `cargo build --target wasm-32-unknown-unknown`");
-            let mut cargo = Command::new("cargo");
+            println!("Running `clang main.c --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-all -o main.wasm`");
+            let mut clang = Command::new("clang");
 
-            let absolute_rust_target_path =
-                canonicalize(&PathBuf::from("../").join(&self.rust_dir))?;
+            let absolute_c_target_path = canonicalize(&PathBuf::from("../").join(&self.c_dir))?;
 
             println!(
-                "Setting `cargo` running directory to: {}\n",
-                absolute_rust_target_path.display()
+                "Setting `clang` running directory to: {}\n",
+                absolute_c_target_path.display()
             );
 
-            cargo.current_dir(absolute_rust_target_path);
-            cargo.args([
-                "build",
-                "--target",
-                "wasm32-unknown-unknown",
-                // "--out-dir",
-                // "../wasm/",
+            clang.current_dir(absolute_c_target_path);
+            clang.args([
+                "main.c",
+                "--target=wasm32",
+                "-nostdlib",
+                "-Wl,--no-entry",
+                "-Wl,--export-all", //As of now, all methods are exported
+                "-o",
+                "main.wasm",
             ]);
-            let mut cargo_handle = cargo.spawn()?;
-            cargo_handle.wait()?;
+            let mut clang_handle = clang.spawn()?;
+            clang_handle.wait()?;
         }
 
-        //Clone the generated `rust/target/wasm32-unknown-unknown/debug/emscript_generated.wasm` file into `wasm`
+        //Clone the generated `c/main.wasm` file into `wasm/main.wasm`
         {
-            let generated_wasm_path = self.rust_dir.join(format!(
-                "target/wasm32-unknown-unknown/debug/{GENERATED_PROJ_NAME}.wasm"
-            ));
-            std::fs::copy(
-                &generated_wasm_path,
-                self.wasm_dir.join(format!("{GENERATED_PROJ_NAME}.wasm")),
-            )?;
+            let generated_wasm_path = self.c_dir.join(format!("main.wasm"));
+            let wasm_new_path = self.wasm_dir.join(format!("main.wasm"));
+            std::fs::copy(&generated_wasm_path, &wasm_new_path)?;
 
-            Ok(generated_wasm_path)
+            Ok(wasm_new_path)
         }
     }
 
@@ -290,6 +255,18 @@ impl Runtime {
         };
 
         let store = Store::default();
+        //NOT TUNED -- this is the dynamic memory given to the application, by default limited to 4GB
+        //(so that any compiler faults involving memory leaks won't crash the system)
+        //Note that each wasmer `Page` is [65536] bytes
+        let memory = {
+            let mem_type = MemoryType::new(32, None, false);
+            store.tunables().create_host_memory(
+                &mem_type,
+                &wasmer::vm::MemoryStyle::Dynamic {
+                    offset_guard_size: 0,
+                },
+            )?
+        };
         let module = Module::new(&store, &wasm_bytes)?;
         // The module doesn't import anything, so we create an empty import object.
         let import_object = imports! {};
@@ -305,20 +282,109 @@ impl Runtime {
         Ok(())
     }
 
-    // // Loads the rust code as WASM into this current Runtime
-    // // "rustc src/main.rs --target=wasm32-unknown-unknown"
-    // pub fn load_rust(&self, path: Path, )
-    // /// This method *must* be called before doing anything else with this `Runtime`
-    // fn init(&mut self, ast: &Tree<ASTNode>) -> Result<(), RuntimeErr> {
-    //     let ast_head = ast.find_head().ok_or(RuntimeErr::UnableToFindASTHead)?;
-    //     self.load_method_declarations(ast_head, ast)?;
+    // /// Compiles the given `ast` into a rust project. The root of that project is returned (which contains a `Cargo.toml` and `src/`)
+    // pub fn compile_to_rust(&self, ast: &Tree<ASTNode>) -> Result<PathBuf, std::io::Error> {
+    //     let src_dir = self.rust_dir.join("src/");
 
-    //     Ok(())
+    //     /// A macro which lets you create files more easily (from the root of the generated proj)
+    //     macro_rules! create_file_root {
+    //         ($path:expr) => {
+    //             File::create(self.rust_dir.join($path))?
+    //         };
+    //         ($path:expr, $text:expr) => {{
+    //             let mut f = File::create(self.rust_dir.join($path))?;
+    //             f.write_all($text)?;
+    //             f
+    //         }};
+    //     }
+    //     /// A macro which lets you create files more easily (from the `src` folder of the generated proj)
+    //     macro_rules! create_file_src {
+    //         ($path:expr) => {
+    //             File::create(src_dir.join($path))?
+    //         };
+    //         ($path:expr, $text:expr) => {{
+    //             let mut f = File::create(src_dir.join($path))?;
+    //             f.write_all($text)?;
+    //             f
+    //         }};
+    //     }
+    //     //Cargo.toml
+    //     {
+    //         println!("Creating `{}`", self.rust_dir.join("Cargo.toml").display());
+
+    //         let cargo_toml = format!(
+    //             r##"
+    //         [package]
+    //         name = "{GENERATED_PROJ_NAME}"
+    //         version = "0.1.0"
+    //         edition = "2021"
+
+    //         [dependencies]
+    //         panic-semihosting = "0.6.0"
+    //         panic-halt = "0.2.0"
+    //         "##
+    //         );
+    //         create_file_root!("Cargo.toml", cargo_toml.as_bytes());
+    //     }
+    //     //main.rs
+    //     {
+    //         println!("Creating `{}`", src_dir.join("main.rs").display());
+
+    //         let rust_ast = ast_to_rast(ast);
+    //         println!("Generated Rust AST:\n{}", rust_ast);
+
+    //         let main = rast_to_string(&rust_ast);
+
+    //         create_file_src!("main.rs", main.as_bytes());
+    //     }
+
+    //     println!("\n");
+    //     Ok(self.rust_dir.to_path_buf())
     // }
-    // /// Interprets an AST and returns a value produced if no errors are encountered
-    // pub fn interpret_ast(&self, ast: &Tree<ASTNode>) -> Result<Value, RuntimeErr> {
-    //     self.interpret(ast.find_head().unwrap(), 0, ast, &mut HashMap::new())
+
+    // /// Using a generated rust project, compile into WASM and return the path to the wasm file which was generated (and which is ready to be run)
+    // pub fn compile_rust(&self) -> Result<PathBuf, std::io::Error> {
+    //     // let rust_src_dir = self.target_path.join("rust/src/");
+
+    //     //Call `cargo`
+    //     {
+    //         println!("Running `cargo build --target wasm-32-unknown-unknown`");
+    //         let mut cargo = Command::new("cargo");
+
+    //         let absolute_rust_target_path =
+    //             canonicalize(&PathBuf::from("../").join(&self.rust_dir))?;
+
+    //         println!(
+    //             "Setting `cargo` running directory to: {}\n",
+    //             absolute_rust_target_path.display()
+    //         );
+
+    //         cargo.current_dir(absolute_rust_target_path);
+    //         cargo.args([
+    //             "build",
+    //             "--target",
+    //             "wasm32-unknown-unknown",
+    //             // "--out-dir",
+    //             // "../wasm/",
+    //         ]);
+    //         let mut cargo_handle = cargo.spawn()?;
+    //         cargo_handle.wait()?;
+    //     }
+
+    //     //Clone the generated `rust/target/wasm32-unknown-unknown/debug/emscript_generated.wasm` file into `wasm`
+    //     {
+    //         let generated_wasm_path = self.rust_dir.join(format!(
+    //             "target/wasm32-unknown-unknown/debug/{GENERATED_PROJ_NAME}.wasm"
+    //         ));
+    //         std::fs::copy(
+    //             &generated_wasm_path,
+    //             self.wasm_dir.join(format!("{GENERATED_PROJ_NAME}.wasm")),
+    //         )?;
+
+    //         Ok(generated_wasm_path)
+    //     }
     // }
+
     // fn load_method_declarations(
     //     &mut self,
     //     curr: NodeId,
