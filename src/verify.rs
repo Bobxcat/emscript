@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use crate::{
     ast::{ASTNode, ASTNodeType, Value},
-    interpret::Runtime,
+    runtime::Runtime,
     tree::{NodeId, Tree},
 };
 

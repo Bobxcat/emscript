@@ -5,7 +5,7 @@ use std::{
 
 use parse::parse;
 
-use crate::{interpret::Runtime, token::tokenize};
+use crate::{runtime::Runtime, token::tokenize};
 
 #[macro_use]
 extern crate lazy_static;
@@ -19,10 +19,9 @@ extern crate wasmer_engine_universal;
 
 mod ast;
 mod c_ast;
-mod compile;
-mod interpret;
 mod parse;
 mod prim_tree;
+mod runtime;
 mod rust_ast;
 mod token;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
