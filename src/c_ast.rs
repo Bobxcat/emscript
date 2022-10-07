@@ -57,6 +57,14 @@ pub enum CASTNode {
 
 impl std::fmt::Display for CASTNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let var = (CASTNode::Add, CASTNode::Brackets);
+
+        match var {
+            (CASTNode::Add, CASTNode::Brackets) => println!("hi"),
+            (CASTNode::Add, CASTNode::Sub) => println!("Also"),
+            _ => (),
+        }
+
         let s = match self {
             CASTNode::Ignore => format!("Ignore"),
             CASTNode::Literal(val) => format!("{val}"),

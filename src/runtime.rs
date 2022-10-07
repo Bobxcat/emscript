@@ -219,7 +219,6 @@ impl Runtime {
                 "Setting `clang` running directory to: {}\n",
                 absolute_c_target_path.display()
             );
-
             clang.current_dir(absolute_c_target_path);
             clang.args([
                 "main.c",
