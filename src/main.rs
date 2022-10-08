@@ -4,6 +4,7 @@ use std::{
 };
 
 use parse::parse;
+use runtime::RuntimeCfg;
 
 use crate::{runtime::Runtime, token::tokenize};
 
@@ -28,30 +29,28 @@ mod token;
 mod tree;
 mod verify;
 
-fn main() {
-    let raw = include_str!("test.em");
-
+fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
     //Build Token stream
-    let tokens = tokenize(raw);
-    if let Err(e) = tokens {
-        println!("TokenizeError: {:#?}", e);
-        return;
-    }
-    let tokens = tokens.unwrap();
+    let tokens = tokenize(raw)?;
+    // if let Err(e) = tokens {
+    //     println!("TokenizeError: {:#?}", e);
+    //     return Err(e);
+    // }
+    // let tokens = tokens.unwrap();
 
     //Build AST
     let ast = parse(tokens.clone());
     if let Err(_e) = ast {
         println!("AST parsing error encountered");
         println!("\n==Tokens==\n{:#?}\n=========", tokens);
-        return;
+        return Err(anyhow::format_err!("AST parsing error encountered"));
     }
     let ast = ast.unwrap();
 
-    println!("==AST==\n{}=======\n", ast);
+    // println!("==AST==\n{}=======\n", ast);
 
     //At this point, a runtime needs to be created to proceed
-    let mut runtime = Runtime::new_init(&ast).unwrap();
+    let mut runtime = Runtime::new_init(&ast, cfg).unwrap();
 
     // Verify AST
     // if let Err(e) = runtime.verify(&ast) {
@@ -66,12 +65,26 @@ fn main() {
 
     runtime.setup_target_dir_relative("./em_target/").unwrap();
 
-    let c_dir = runtime.compile_to_c(&ast).unwrap();
-    println!("c_dir: {}", c_dir.display());
+    let _c_dir = runtime.compile_to_c(&ast).unwrap();
+    // println!("c_dir: {}", c_dir.display());
 
     let wasm_path = runtime.compile_c().unwrap();
-    println!("wasm_dir: {}\n\n", wasm_path.display());
+    // println!("wasm_dir: {}\n\n", wasm_path.display());
 
     println!("Running {}\n", wasm_path.display());
     runtime.run_wasm(wasm_path).unwrap();
+
+    Ok(runtime)
+}
+
+fn main() -> anyhow::Result<()> {
+    let raw = include_str!("test.em");
+    let runtime = compile_text(
+        raw,
+        RuntimeCfg {
+            print_cast: false,
+            verbose_compile: false,
+        },
+    )?;
+    Ok(())
 }

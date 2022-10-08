@@ -48,6 +48,17 @@ pub enum TokenizeError {
     FailedToParse { ctx: StringContext },
 }
 
+impl std::fmt::Display for TokenizeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::FailedToParse { ctx } => format!("Failed to parse:\n{ctx}"),
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::error::Error for TokenizeError {}
+
 fn try_parse<F>(val: &str, ctx: StringContext) -> Result<F, TokenizeError>
 where
     F: FromStr,

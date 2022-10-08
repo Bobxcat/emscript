@@ -23,13 +23,54 @@ impl Type {
         //All the types that `self` can be coerced into. This will always contain `self` by default
         let mut coercable_types = match self {
             Int => vec![Int32],
-            Int32 => vec![Int],
             _ => Vec::new(),
         };
         coercable_types.push(self);
 
         //Return whether or not `other` is a type coercable from `self`
         coercable_types.contains(&other)
+    }
+    /// Returns `true` if *either* `self` is coercable to `other` or `other` is coercable to `self`
+    fn coercable_to_unordered(self, other: Type) -> bool {
+        self.coercable_to(other) || other.coercable_to(self)
+    }
+    fn can_add(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    fn can_sub(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    fn can_mul(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    fn can_div(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    fn can_eq(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    fn can_ne(self, other: Type) -> bool {
+        self.coercable_to_unordered(other)
+    }
+    /// Returns `true` if the provided operation can be applied to `self` and `other`, in that order
+    fn can_operate(self, other: Type, bin_op: &ASTNodeType) -> bool {
+        // If the value is coercable, than the operation is necessarily valid
+        if self.coercable_to_unordered(other) {
+            return true;
+        }
+        match bin_op {
+            ASTNodeType::Add => self.can_add(other),
+            ASTNodeType::Sub => self.can_sub(other),
+            ASTNodeType::Mul => self.can_mul(other),
+            ASTNodeType::Div => self.can_div(other),
+            ASTNodeType::Eq => self.can_eq(other),
+            ASTNodeType::Ne => self.can_ne(other),
+            ASTNodeType::Lt => todo!(),
+            ASTNodeType::Gt => todo!(),
+            ASTNodeType::Le => todo!(),
+            ASTNodeType::Ge => todo!(),
+            _ => panic!("Called `can_operate` with non-operator: {:#?}", bin_op),
+        }
     }
 }
 
@@ -86,7 +127,6 @@ pub enum VerificationErrorType {
     UndefinedVar {
         name: String,
     },
-    //UnknownType, <<for when
 }
 
 impl Runtime {
@@ -130,33 +170,10 @@ impl Runtime {
                 Value::String(_) => Type::String,
             },
             //Binary ops
-            Add | Sub | Mul | Div => {
+            Add | Sub | Mul | Div | Eq | Ne | Lt | Gt | Le | Ge => {
                 let lhs_t = type_check!(children[0])?;
                 let rhs_t = type_check!(children[1])?;
-
-                //`rhs` coerces into `lhs` by default
-                if !rhs_t.coercable_to(lhs_t) {
-                    //println!("Err: {rhs_t}-x>{lhs_t}");
-                    //Return a mismatched type error as if `rhs` is the culprit
-                    errs.push(VerificationError::new(
-                        &ast[children[1]].data,
-                        VerificationErrorType::MismatchedTypes {
-                            expected: lhs_t,
-                            given: rhs_t,
-                        },
-                    ));
-                }
-
-                lhs_t
-            }
-            Eq | Ne | Lt | Gt | Le | Ge => {
-                let lhs_t = type_check!(children[0])?;
-                let rhs_t = type_check!(children[1])?;
-
-                //`rhs` coerces into `lhs` by default
-                //TODO: Seperate restraints for `cmp` and `coerce` (or `arithmetic`)
-                //When assigning, `rhs` coerces into `lhs`
-                if !rhs_t.coercable_to(lhs_t) {
+                if !lhs_t.can_operate(rhs_t, &ast[curr].data.t) {
                     //Return a mismatched type error where `rhs` is the culprit
                     errs.push(VerificationError::new(
                         &ast[children[0]].data,
@@ -166,7 +183,12 @@ impl Runtime {
                         },
                     ));
                 }
-                Type::Bool
+                //The return type of different binary ops is not always just the input types
+                match &ast[curr].data.t {
+                    Add | Sub | Mul | Div => lhs_t,
+                    Eq | Ne | Lt | Gt | Le | Ge => Type::Bool,
+                    _ => unreachable!(),
+                }
             }
             //Unlike binary ops, `Assign` returns `Void` (but still needs type coercability)
             Assign { name } => {
