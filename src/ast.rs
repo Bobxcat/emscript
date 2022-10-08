@@ -1,7 +1,6 @@
 use std::{
     fmt::Display,
     ops::{Add, Div, Mul, Range, Sub},
-    rc::Rc,
 };
 
 use crate::verify::Type;

@@ -1,4 +1,4 @@
-use std::{sync::Mutex, vec};
+use std::{collections::HashMap, sync::Mutex, vec};
 
 use crate::{
     ast::{ASTNode, ASTNodeType, Value},
@@ -30,6 +30,10 @@ pub enum CASTNode {
         inputs: Vec<(Type, String)>,
         return_type: Type,
     },
+    /// Represents an if statement
+    ///
+    /// `2` children, first is conditional, second is body
+    If,
     /// Represents an assignment of a variable with the given name to the value returned by this node's child
     ///
     /// `1` child
@@ -80,14 +84,21 @@ pub enum CASTNode {
     Sub,
     Mul,
     Div,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
 }
 
 impl std::fmt::Display for CASTNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use CASTNode::*;
         let s = match self {
-            CASTNode::Ignore => format!("Ignore"),
-            CASTNode::Literal(val) => format!("{val}"),
-            CASTNode::MethodDef {
+            Ignore => format!("Ignore"),
+            Literal(val) => format!("{val}"),
+            MethodDef {
                 name,
                 inputs,
                 return_type,
@@ -103,24 +114,31 @@ impl std::fmt::Display for CASTNode {
                     cast_type_to_string(*return_type)
                 )
             }
-            CASTNode::Assign(name) => format!("Assign `{name}`"),
+            Assign(name) => format!("Assign `{name}`"),
+            If => format!("If"),
 
-            CASTNode::VarDec { name, t } => format!("Declare `{} {name}`", cast_type_to_string(*t)),
-            CASTNode::VarDecList { names, t } => {
+            VarDec { name, t } => format!("Declare `{} {name}`", cast_type_to_string(*t)),
+            VarDecList { names, t } => {
                 let list = names.join(", ");
                 format!("DeclareList `{} {list}`", cast_type_to_string(*t))
             }
-            CASTNode::Brackets => format!("Brackets"),
-            CASTNode::Semicolon => format!("Semicolon"),
-            CASTNode::Add => format!("Add"),
-            CASTNode::Sub => format!("Sub"),
-            CASTNode::Return => format!("Return"),
-            CASTNode::VarRef(name) => format!("VarRef `{name}`"),
-            CASTNode::VarDecAssign { name, t } => {
+            Brackets => format!("Brackets"),
+            Semicolon => format!("Semicolon"),
+            Add => format!("Add"),
+            Sub => format!("Sub"),
+            Return => format!("Return"),
+            VarRef(name) => format!("VarRef `{name}`"),
+            VarDecAssign { name, t } => {
                 format!("DeclareAssign `{} {name}`", cast_type_to_string(*t))
             }
-            CASTNode::Mul => format!("Mul"),
-            CASTNode::Div => format!("Div"),
+            Mul => format!("Mul"),
+            Div => format!("Div"),
+            Eq => format!("Eq"),
+            Ne => format!("Ne"),
+            Lt => format!("Lt"),
+            Gt => format!("Gt"),
+            Le => format!("Le"),
+            Ge => format!("Ge"),
         };
         write!(f, "{s}")
     }
@@ -140,7 +158,12 @@ fn cast_type_to_string(t: Type) -> String {
     match t {
         Type::Void => format!("void"),
         Type::Bool => format!("bool"),
-        Type::Int => format!("long"),
+        Type::Int => {
+            println!(
+                "Warning: `Type::Int` was passed to `cast_type_to_string`. This should be avoided but will default to `long`"
+            );
+            format!("long")
+        }
         Type::Int32 => format!("int"),
         Type::String => todo!(),
     }
@@ -148,8 +171,7 @@ fn cast_type_to_string(t: Type) -> String {
 
 /// Takes in a `C` AST and outputs a string ready to be written to a `C` program file
 pub fn cast_to_string(cast: &Tree<CASTNode>) -> String {
-    // println!("==C_AST==\n{cast}\n=========");
-
+    //The items to be included at the top of the c file
     const INCLUDES: &'static [&str] = &["<stdbool.h>"];
     let includes_string = INCLUDES
         .clone()
@@ -191,7 +213,7 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
     }
 
     match &cast[curr].data {
-        CASTNode::Ignore => join_all_children!("\n"),
+        CASTNode::Ignore => join_all_children!(""), //\n
         CASTNode::Literal(val) => cast_literal_to_string(val),
         CASTNode::MethodDef {
             name,
@@ -204,17 +226,25 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             let return_type_string = cast_type_to_string(*return_type);
-            let body_string = join_all_children!("\n");
+            let body_string = join_all_children!(""); //\n
             format!("{return_type_string} {name}({inputs_string}) {{\n{body_string}\n}}")
         }
+        CASTNode::If => format!("if ({}) {{{}}}", child!(0), child!(1)),
+
         //Basic bin ops
         CASTNode::Add => format!("({} + {})", child!(0), child!(1)),
         CASTNode::Sub => format!("({} - {})", child!(0), child!(1)),
         CASTNode::Mul => format!("({} * {})", child!(0), child!(1)),
         CASTNode::Div => format!("({} / {})", child!(0), child!(1)),
+        CASTNode::Eq => format!("({} == {})", child!(0), child!(1)),
+        CASTNode::Ne => format!("({} != {})", child!(0), child!(1)),
+        CASTNode::Gt => format!("({} > {})", child!(0), child!(1)),
+        CASTNode::Lt => format!("({} < {})", child!(0), child!(1)),
+        CASTNode::Ge => format!("({} >= {})", child!(0), child!(1)),
+        CASTNode::Le => format!("({} <= {})", child!(0), child!(1)),
         //
         CASTNode::Semicolon => format!("{};", child!(0)),
-        CASTNode::Brackets => format!("{{{}}}", join_all_children!("\n")),
+        CASTNode::Brackets => format!("{{{}}}", join_all_children!("")), //\n
         CASTNode::Assign(name) => format!("{name} = {}", child!(0)),
         CASTNode::VarDec { name, t } => format!("{} {name}", cast_type_to_string(*t)),
         CASTNode::VarDecList { names, t } => {
@@ -229,8 +259,26 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
     }
 }
 
-pub fn ast_to_cast(ast: &Tree<ASTNode>) -> anyhow::Result<Tree<CASTNode>> {
+pub fn ast_to_cast(ast: &mut Tree<ASTNode>) -> anyhow::Result<Tree<CASTNode>> {
+    mangle_ast(ast)?;
     ast_to_cast_recurse(ast, ast.find_head().expect("Couldn't find AST head"), None)
+}
+
+/// Mangles the input `ast` in such a way that all identifiers are unique within their scope
+///
+/// For example:
+///
+/// `let b = {let a = 3; let b = {let a = 4; a}; b}`
+///
+/// would be turned into something like:
+///
+/// `let _0_b = {let _0_a = 3; let _1_b = {let _1_a = 4; _1_a}; _1_b}`
+fn mangle_ast(ast: &mut Tree<ASTNode>) -> anyhow::Result<()> {
+    Ok(())
+}
+
+fn mangle_ast_recurse(ast: &mut Tree<ASTNode>, ident_count: &mut HashMap<String, usize>) {
+    todo!()
 }
 
 /// * `ast` - The input AST for EmScript code
@@ -338,7 +386,7 @@ fn ast_to_cast_recurse(
                 }
             } else {
                 return Err(anyhow::format_err!(
-                    "An assignment [VarDef] occured with `return_var = Some(_)`, when assignment returns void"
+                    "An assignment [VarDef] occured with `return_var = {return_var:?}`, when assignment returns void"
                 ));
             }
         }
@@ -378,15 +426,73 @@ fn ast_to_cast_recurse(
                 cast.append_to(parent, return_statement)?;
             }
         }
-        ASTNodeType::MethodCall { name } => todo!(),
-        ASTNodeType::IfCondition => todo!(),
-        ASTNodeType::Add | ASTNodeType::Sub | ASTNodeType::Mul | ASTNodeType::Div => {
+        ASTNodeType::MethodCall { name } => {
+            // let params_tmp_vars = Vec::with_capacity(children.len());
+            // //For each parameter
+            // for param in children {
+            //     params_tmp_vars.push();
+            // }
+        }
+        ASTNodeType::IfCondition => {
+            let parent = cast.new_node(CASTNode::Ignore);
+            let t = Type::Int32;
+            let tmp_conditional = generate_tmp();
+            //TODO: deal with the case where the body returns `void`
+            // let tmp_body = generate_tmp();
+
+            //Create declarations for the temp variables
+            {
+                let semicolon = cast.new_node(CASTNode::Semicolon);
+                let var_dec_list = cast.new_node(CASTNode::VarDecList {
+                    names: vec![tmp_conditional.clone()],
+                    // names: vec![tmp_conditional.clone(), tmp_body.clone()],
+                    t,
+                });
+                cast.append_to(semicolon, var_dec_list)?;
+                cast.append_to(parent, semicolon)?;
+            }
+
+            //Compile conditional value
+            {
+                let brackets = cast.new_node(CASTNode::Brackets);
+                cast.append_to(parent, brackets)?;
+
+                let condition = &mut recurse_child!(0, Some(tmp_conditional.clone()));
+                cast.append_tree(brackets, condition)?;
+            }
+            //Compile if-statement
+            {
+                let if_statement = cast.new_node(CASTNode::If);
+                cast.append_to(parent, if_statement)?;
+
+                //Append condition
+                let condition = cast.new_node(CASTNode::VarRef(tmp_conditional.clone()));
+                cast.append_to(if_statement, condition)?;
+
+                //Append body
+                let body = &mut recurse_child!(1, return_var.clone());
+                cast.append_tree(if_statement, body)?;
+            }
+
+            // if let Some(n) = return_var {}
+        }
+        //Binary operations
+        ASTNodeType::Add
+        | ASTNodeType::Sub
+        | ASTNodeType::Mul
+        | ASTNodeType::Div
+        | ASTNodeType::Eq
+        | ASTNodeType::Ne
+        | ASTNodeType::Lt
+        | ASTNodeType::Gt
+        | ASTNodeType::Le
+        | ASTNodeType::Ge => {
             let parent = cast.new_node(CASTNode::Ignore);
             let t = Type::Int32;
             let tmp_1 = generate_tmp();
             let tmp_2 = generate_tmp();
 
-            //Create the declarations for the tmp vars
+            //Create declarations for the temp variables
             {
                 let semicolon = cast.new_node(CASTNode::Semicolon);
                 let var_dec_list = cast.new_node(CASTNode::VarDecList {
@@ -412,7 +518,7 @@ fn ast_to_cast_recurse(
                 let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
                 cast.append_tree(brackets, rhs)?;
             }
-            //The final assignment statement
+            //Final assignment statement
             {
                 let semicolon = cast.new_node(CASTNode::Semicolon);
                 let assignment = cast.new_node(CASTNode::Assign(return_var.unwrap()));
@@ -425,12 +531,12 @@ fn ast_to_cast_recurse(
                         ASTNodeType::Sub => CASTNode::Sub,
                         ASTNodeType::Mul => CASTNode::Mul,
                         ASTNodeType::Div => CASTNode::Div,
-                        ASTNodeType::Eq => todo!(),
-                        ASTNodeType::Ne => todo!(),
-                        ASTNodeType::Lt => todo!(),
-                        ASTNodeType::Gt => todo!(),
-                        ASTNodeType::Le => todo!(),
-                        ASTNodeType::Ge => todo!(),
+                        ASTNodeType::Eq => CASTNode::Eq,
+                        ASTNodeType::Ne => CASTNode::Ne,
+                        ASTNodeType::Lt => CASTNode::Lt,
+                        ASTNodeType::Gt => CASTNode::Gt,
+                        ASTNodeType::Le => CASTNode::Le,
+                        ASTNodeType::Ge => CASTNode::Ge,
                         _ => unreachable!(),
                     };
                     cast.new_node(op)
@@ -449,14 +555,6 @@ fn ast_to_cast_recurse(
             // return_var = {tmp_1} + {tmp_2};
             // todo!()
         }
-        ASTNodeType::Mul => todo!(),
-        ASTNodeType::Div => todo!(),
-        ASTNodeType::Eq => todo!(),
-        ASTNodeType::Ne => todo!(),
-        ASTNodeType::Lt => todo!(),
-        ASTNodeType::Gt => todo!(),
-        ASTNodeType::Le => todo!(),
-        ASTNodeType::Ge => todo!(),
         ASTNodeType::Assign { name } => {
             if let Some(_return_var) = return_var.clone() {
                 single_parent!(CASTNode::Assign(name.clone()))

@@ -4,7 +4,7 @@ use std::{
 };
 
 use parse::parse;
-use runtime::RuntimeCfg;
+use runtime::{OptLevel::Debug, RuntimeCfg};
 
 use crate::{runtime::Runtime, token::tokenize};
 
@@ -45,7 +45,7 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
         println!("\n==Tokens==\n{:#?}\n=========", tokens);
         return Err(anyhow::format_err!("AST parsing error encountered"));
     }
-    let ast = ast.unwrap();
+    let mut ast = ast.unwrap();
 
     // println!("==AST==\n{}=======\n", ast);
 
@@ -65,7 +65,7 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
 
     runtime.setup_target_dir_relative("./em_target/").unwrap();
 
-    let _c_dir = runtime.compile_to_c(&ast).unwrap();
+    let _c_dir = runtime.compile_to_c(&mut ast).unwrap();
     // println!("c_dir: {}", c_dir.display());
 
     let wasm_path = runtime.compile_c().unwrap();
@@ -84,6 +84,7 @@ fn main() -> anyhow::Result<()> {
         RuntimeCfg {
             print_cast: false,
             verbose_compile: false,
+            opt_level: Debug,
         },
     )?;
     Ok(())
