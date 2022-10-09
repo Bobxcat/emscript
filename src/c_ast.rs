@@ -264,20 +264,41 @@ pub fn ast_to_cast(ast: &mut Tree<ASTNode>) -> anyhow::Result<Tree<CASTNode>> {
     ast_to_cast_recurse(ast, ast.find_head().expect("Couldn't find AST head"), None)
 }
 
-/// Mangles the input `ast` in such a way that all identifiers are unique within their scope
+/// Mangles the input `ast` in such a way that all identifiers are globally unique
 ///
 /// For example:
 ///
-/// `let b = {let a = 3; let b = {let a = 4; a}; b}`
+/// `let b = {let a = 3; let b = {let a = 4; a}; let c = {let a = 4; a}; b + c}`
 ///
 /// would be turned into something like:
 ///
-/// `let _0_b = {let _0_a = 3; let _1_b = {let _1_a = 4; _1_a}; _1_b}`
+/// `let _0_b = {let _0_a = 3; let _1_b = {let _1_a = 4; _1_a}; let _1_c = {let _2_a = 4; _2_a} _1_b}`
 fn mangle_ast(ast: &mut Tree<ASTNode>) -> anyhow::Result<()> {
+    mangle_ast_recurse(ast, ast.find_head().unwrap(), &mut 0, &mut HashMap::new());
     Ok(())
 }
 
-fn mangle_ast_recurse(ast: &mut Tree<ASTNode>, ident_count: &mut HashMap<String, usize>) {
+fn mangle_ast_recurse(
+    ast: &mut Tree<ASTNode>,
+    curr: NodeId,
+    ident_count: &mut usize,
+    var_replacements: &mut HashMap<String, String>,
+) {
+    let parent = ast[curr].parent.unwrap();
+    /// Generates a new unique identifier using the supplied base name
+    macro_rules! gen_ident {
+        ($base_name:expr) => {{
+            let s = format!("_{}_{}", *ident_count, $base_name);
+            *ident_count += 1;
+            s
+        }};
+    }
+    //If the current scope is deeper than the parent, generate a new hashmap to be passed among the children
+    let vars = var_replacements;
+    if ast[curr].data.scope_depth > ast[parent].data.scope_depth {
+        //*vars = var_replacements.clone()
+    }
+
     todo!()
 }
 

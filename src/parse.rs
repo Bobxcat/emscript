@@ -149,9 +149,35 @@ pub use parser::*;
 use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     prim_tree::PrimNode,
-    tree::Tree,
+    tree::{NodeId, Tree},
     verify::Type,
 };
+
+fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: usize) {
+    use ASTNodeType::*;
+    ast[curr].data.scope_depth = curr_scope;
+    let children = ast[curr].children.clone();
+    macro_rules! set_all_children {
+        ($scope_delta:expr) => {
+            for c in children {
+                set_scope_depths_recurse(ast, c, $scope_delta + curr_scope);
+            }
+        };
+    }
+    macro_rules! set_child {
+        ($child_index:expr, $scope_delta:expr) => {
+            set_scope_depths_recurse(ast, children[$child_index], $scope_delta + curr_scope)
+        };
+    }
+    match &ast[curr].data.t {
+        MethodDef { .. } | LastValueReturn | ValueConsume => set_all_children!(1),
+        IfCondition => {
+            set_child!(0, 0);
+            set_child!(1, 1);
+        }
+        _ => set_all_children!(0),
+    };
+}
 
 pub fn parse(tokens: Vec<Token>) -> Result<Tree<ASTNode>, ()> {
     let mut p = Parser::new();
@@ -159,7 +185,13 @@ pub fn parse(tokens: Vec<Token>) -> Result<Tree<ASTNode>, ()> {
         p.parse(t)?;
     }
 
-    let data = p.end_of_input()?;
+    let mut ast = p.end_of_input()?;
 
-    Ok(data)
+    //Set the scope depth for the ast
+    {
+        let head = ast.find_head().unwrap();
+        set_scope_depths_recurse(&mut ast, head, 0);
+    }
+
+    Ok(ast)
 }

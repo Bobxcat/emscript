@@ -4,7 +4,7 @@ use std::{
 };
 
 use parse::parse;
-use runtime::{OptLevel::Debug, RuntimeCfg};
+use runtime::RuntimeCfg;
 
 use crate::{runtime::Runtime, token::tokenize};
 
@@ -78,6 +78,8 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
 }
 
 fn main() -> anyhow::Result<()> {
+    use runtime::OptLevel::*;
+
     let raw = include_str!("test.em");
     let runtime = compile_text(
         raw,
