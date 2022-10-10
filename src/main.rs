@@ -20,6 +20,7 @@ extern crate wasmer_engine_universal;
 
 mod ast;
 mod c_ast;
+mod ir;
 mod parse;
 mod prim_tree;
 mod runtime;
