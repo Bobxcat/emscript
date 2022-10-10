@@ -23,7 +23,12 @@ pub enum IRNode {
 /// Identifiers do not store the string themselves, instead a reference to which identifier they refer to
 pub struct IRAST {
     pub tree: Tree<IRNode>,
-    pub idents: HashMap<IRIdentID, String>,
+    /// All identifiers in the AST
+    ///
+    /// TODO: how to deal with the difference between methods with parameter types & return type and variables,
+    /// which just have a type?
+    /// Possibly: store identifier info as an enum (method or variable). Or, have a seperate hashmap for methods
+    pub idents: HashMap<IRIdentID, (String, Type)>,
 }
 
 impl IRAST {
