@@ -218,7 +218,7 @@ impl Runtime {
                 *t
             }
             //VariableDef acts like `Assign` in terms of
-            VariableDef { name } => {
+            VariableDef { name, t: _ } => {
                 let val_t = type_check!(children[0])?;
                 variables.insert(name.to_string(), val_t);
                 Type::Void

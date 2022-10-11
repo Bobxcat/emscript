@@ -24,7 +24,7 @@ mod ir;
 mod parse;
 mod prim_tree;
 mod runtime;
-mod rust_ast;
+// mod rust_ast;
 mod token;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
 mod tree;
@@ -53,7 +53,7 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast, cfg).unwrap();
 
-    // Verify AST
+    // Verify AST << this is important, but should be moved to a step on IRAST
     // if let Err(e) = runtime.verify(&ast) {
     // println!("Errors encountered verifying AST:\n");
     // for e in e {

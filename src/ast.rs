@@ -67,9 +67,8 @@ impl Display for ASTNode {
             }
             MethodCall { name } => format!("Method call: {name}"),
             IfCondition => format!("If statement"),
-            //ASTNodeType::MethodCall { name } => format!("Method call: {name}"),
         };
-        write!(f, "{}", s)
+        write!(f, "[scope:{}]{}", self.scope_depth, s)
     }
 }
 
@@ -160,14 +159,15 @@ pub enum ASTNodeType {
     ///
     /// `0` children
     Literal { val: Value },
-    /// A variable identifier
+    /// A variable identifier.
     ///
     /// `0` children
     VariableRef { name: String },
     /// The initial declaration of a variable, where its initial value is the evalution of this node's child
+    /// Contains a type which is `Some(_)` if the type of the variable has been determined, `None` otherwise
     ///
     /// `1` child
-    VariableDef { name: String },
+    VariableDef { name: String, t: Option<Type> },
     /// The definition for a method. The body of the code is stored as a child of this node
     ///
     /// `1` child

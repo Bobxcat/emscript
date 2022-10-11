@@ -124,7 +124,8 @@ pomelo! {
 
     //Identifiers
     expr ::= Ident((ctx, s)) { new_node(VariableRef { name: s }, ctx, vec![]) };
-    expr ::= Let Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s }, ctx, vec![rhs]) };
+    expr ::= Let Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: None }, ctx, vec![rhs]) };
+    expr ::= Let TypeDec((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(t) }, ctx, vec![rhs]) };
     expr ::= LParen expr(A) RParen { A }
     expr ::= expr(A) Semicolon(ctx) { new_node(ValueConsume, ctx, vec![A]) };
 
@@ -157,6 +158,8 @@ fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: u
     use ASTNodeType::*;
     ast[curr].data.scope_depth = curr_scope;
     let children = ast[curr].children.clone();
+    /// Sets all children to have a scope depth which is `$scope_delta` higher than this level
+    /// * `$scope_delta`
     macro_rules! set_all_children {
         ($scope_delta:expr) => {
             for c in children {
@@ -170,7 +173,7 @@ fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: u
         };
     }
     match &ast[curr].data.t {
-        MethodDef { .. } | LastValueReturn | ValueConsume => set_all_children!(1),
+        MethodDef { .. } | LastValueReturn => set_all_children!(1),
         IfCondition => {
             set_child!(0, 0);
             set_child!(1, 1);

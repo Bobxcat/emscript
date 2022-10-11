@@ -25,14 +25,6 @@ enum TokenType {
     String,
     Ident,
     MethodCallStart,
-    /// A declaration which represents an explicit type
-    // TypeDec(Type),
-    //Keywords
-    // Let, //`let`
-    // Fn, //`fn`
-    // If, //`if`
-    // True,  //`true`
-    // False, //`false`
     //Misc
     LParen,
     RParen,
