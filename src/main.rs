@@ -48,12 +48,12 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
     }
     let mut ast = ast.unwrap();
 
-    // println!("==AST==\n{}=======\n", ast);
+    println!("==AST==\n{}=======\n", ast);
 
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast, cfg).unwrap();
 
-    // Verify AST << this is important, but should be moved to a step on IRAST
+    // Verify AST << this is important, but should be moved to a step on `IRAST`
     // if let Err(e) = runtime.verify(&ast) {
     // println!("Errors encountered verifying AST:\n");
     // for e in e {

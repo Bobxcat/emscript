@@ -45,7 +45,7 @@ impl Display for ASTNode {
             Gt => format!("Gt"),
             Le => format!("Le"),
             Ge => format!("Ge"),
-            Assign { .. } => format!("Assign"),
+            Assign { name } => format!("Assign: {name}"),
             VariableRef { name } => format!("Var: {name}"),
             VariableDef { name, .. } => format!("Var Def: {name}"),
             ValueConsume { .. } => format!("Value consume"),
@@ -68,7 +68,8 @@ impl Display for ASTNode {
             MethodCall { name } => format!("Method call: {name}"),
             IfCondition => format!("If statement"),
         };
-        write!(f, "[scope:{}]{}", self.scope_depth, s)
+        write!(f, "{}", s)
+        // write!(f, "[scope:{}]{}", self.scope_depth, s)
     }
 }
 

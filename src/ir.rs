@@ -216,7 +216,6 @@ impl IRAST {
         ast: &Tree<ASTNode>,
         curr: NodeId,
         ident_stack: &mut IdentScopeStack,
-        // increase_scope: bool,
     ) -> anyhow::Result<Tree<IRNode>> {
         // println!(
         //     "Current node: {}\nRaw Context: {:?}\nCurrent ident stack: {:#?}\n\n",
@@ -227,12 +226,20 @@ impl IRAST {
 
         /// Recursively calls this method on all children, appending them with the supplied `IRNode` as their parent
         ///
+        /// Returns the ID of the parent which was added from the supplied value
+        ///
         /// * `parent_ir_node`
         macro_rules! single_parent {
             ($parent:expr) => {{
                 let parent = ir_tree.new_node($parent);
 
-                let mut prev = curr;
+                single_parent_id!(parent);
+            }};
+        }
+
+        /// Equivalent to `single_parent` except that it takes the ID of an already-generated parent node instead of value
+        macro_rules! single_parent_id {
+            ($parent:expr) => {{let mut prev = curr;
 
                 for c in children {
                     //When the scope increases, adjust (if c > prev: increase_scope)
@@ -243,7 +250,7 @@ impl IRAST {
                     }
                     let mut subtree = Self::from_ast_recurse(ast, c, ident_stack)?;
                     // let mut subtree = recurse_on_id!(c);
-                    ir_tree.append_tree(parent, &mut subtree)?;
+                    ir_tree.append_tree($parent, &mut subtree)?;
 
                     if ast[c].data.scope_depth < ast[prev].data.scope_depth {
                         ident_stack.decrease_scope();
@@ -254,20 +261,24 @@ impl IRAST {
                 //when the final child has a deeper scope than the parent (which is often)
                 if ast[curr].data.scope_depth < ast[prev].data.scope_depth {
                     ident_stack.decrease_scope();
-                }
-            }};
+                }}};
         }
 
         match &ast[curr].data.t {
             ASTNodeType::VariableDef { name, t } => {
+                //Variables, when declared/defined, do not affect the scope of the rhs of their assignment
+                //So, create a temporary parent variable when running the children and replace it later
+                let tmp = ir_tree.new_node(IRNode::Add);
+                single_parent_id!(tmp);
+
+                //Generate the identifier and replace the temporary data
                 let ident = ident_stack.new_ident(IdentInfo::Var {
                     name: name.clone(),
                     t: t.ok_or(anyhow::format_err!(
                         "VariableDef `{name}` has a type which is currently unknown"
                     ))?,
                 });
-
-                single_parent!(IRNode::VarDef(ident))
+                ir_tree[tmp].data = IRNode::VarDef(ident);
             }
             ASTNodeType::MethodDef {
                 name,
@@ -278,30 +289,37 @@ impl IRAST {
                 let mut params = Vec::with_capacity(inputs.len());
                 for (t, s) in inputs {
                     let ident = ident_stack.new_ident(IdentInfo::Var {
-                        name: name.clone(),
+                        name: s.clone(),
                         t: *t,
                     });
+                    params.push(ident);
                 }
                 // Generate the method identifier itself
                 let method_id = ident_stack.new_ident(IdentInfo::Method {
                     name: name.clone(),
-                    params,
+                    params: params.clone(),
                     return_type: *return_type,
                 });
                 // Finish by recursing with just this node as the parent
-                single_parent!(IRNode::MethodDef(method_id))
-                // single_parent!(IRNode::MethodDef {
-                //     id: method_id,
-                //     inputs: params,
-                //     return_type: *return_type
-                // })
+                single_parent!(IRNode::MethodDef(method_id));
+
+                // Once finished with recursing on the body, a very important step:
+                // Without this, method parameters would permeate the scope of the method definition
+                // Essentially, remove all of the parameters from the current scope of the stack manually
+                {
+                    let table = ident_stack.tables.last_mut().unwrap();
+                    for id in params {
+                        let param_name = ident_stack.global_idents[&id].name();
+                        table.remove(param_name);
+                    }
+                }
             }
             //Identifier references
             ASTNodeType::VariableRef { name } => {
                 // Try and find this variable, if unable to then return an error
                 // Eventually error handling may become more sophisticated
                 if let Some(var_id) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::VarRef(var_id))
+                    single_parent!(IRNode::VarRef(var_id));
                 } else {
                     return Err(anyhow::format_err!(
                         "Variable referenced which was not in scope: `{name}`"
@@ -312,7 +330,7 @@ impl IRAST {
                 // Try and find this method, if unable to then return an error
                 // Eventually error handling may become more sophisticated
                 if let Some(method_id) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::MethodCall(method_id))
+                    single_parent!(IRNode::MethodCall(method_id));
                 } else {
                     return Err(anyhow::format_err!(
                         "Method called which was not in scope: `{name}`"
@@ -322,7 +340,7 @@ impl IRAST {
             ASTNodeType::Assign { name } => {
                 // let ident = most_valid_ident!(name);
                 if let Some(ident) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::Assign(ident))
+                    single_parent!(IRNode::Assign(ident));
                 } else {
                     return Err(anyhow::format_err!(
                         "Assignment on variable which was not in scope: {name}"

@@ -156,6 +156,7 @@ use crate::{
 
 fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: usize) {
     use ASTNodeType::*;
+
     ast[curr].data.scope_depth = curr_scope;
     let children = ast[curr].children.clone();
     /// Sets all children to have a scope depth which is `$scope_delta` higher than this level
@@ -172,6 +173,8 @@ fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: u
             set_scope_depths_recurse(ast, children[$child_index], $scope_delta + curr_scope)
         };
     }
+
+    //Generally, scope increases for all children of a scope-increasing
     match &ast[curr].data.t {
         MethodDef { .. } | LastValueReturn => set_all_children!(1),
         IfCondition => {

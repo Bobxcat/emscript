@@ -1,19 +1,16 @@
-fn hello_again() -> i32 {
-    let i32 a = 2 + 3;
-    a
+fn hello_again(i32 a) -> i32 {
+    let i32 b = 2 + a;
+    b
 }
 
 fn hello() -> i32 {
-    //let a = -2;
-    let i32 a = 2 + 3 - {
-        //let b = 7;
-        let i32 b = 2 * {
-            let i32 c = 3;
-            c
-        } + 1;
+    //a = -4
+    let i32 a = 1 + 2 - {
+        let i32 b = 7;
         b
-    } + hello_again();
-    
-    let i32 b = if a != 5 { 5 };
-    b
+    };
+    //a = -6
+    a = a + hello_again(a);
+    //return -3
+    a / 2
 }
