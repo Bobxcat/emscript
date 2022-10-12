@@ -16,5 +16,3 @@ wasmer-compiler-cranelift = "2.3.0"
 wasmer-engine-universal = "2.3.0"
 anyhow = "1"
 wasm-ast = "0.1.0"
-# For formatting mangled variable names/tmp vars with compact numbers
-radix_fmt = "1"

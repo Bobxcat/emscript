@@ -16,7 +16,6 @@ extern crate wasmer;
 extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
-extern crate radix_fmt;
 extern crate wasmer_engine_universal;
 
 mod ast;
@@ -81,6 +80,9 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
 
     Ok(runtime)
 }
+
+//TODO:
+//1- currently, a variable declaration listed in `no_mangle_vars` *can* overlap with tmp/mangled vars
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;

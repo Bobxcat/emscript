@@ -1,11 +1,12 @@
-pub const PREFIX_TMP: &str = "_____";
-pub const PREFIX_IDENT: &str = "_";
+pub const PREFIX_TMP: &str = "_tmp";
+//Prefix identifiers should have the most underscores, since user-provided idents can have
+pub const PREFIX_IDENT: &str = "_____";
 
-/// Formats `n` as a string using the following values:
+/// Formats `n` as a base 62 string using the following values:
 /// `0-9`, `A-Z`, `a-z`
 ///
 /// When formatting a `u128`, this means there are more than `u128::MAX + 1` total strings of length 22.
-/// Any integer under 161 bits will fit in `27` characters, enough for a temporary var
+/// Any integer under 161 bits will fit in `27` characters, enough for a prefix of length 5
 pub fn format_compact(mut n: u128) -> String {
     if n == 0 {
         return "0".into();
