@@ -2,7 +2,7 @@ use std::{ops::Range, str::FromStr};
 
 use regex_lexer::{Lexer, LexerBuilder};
 
-use crate::{ast::StringContext, parse::Token, verify::Type};
+use crate::{ast::StringContext, parse::Token, value::Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TokenType {
@@ -73,7 +73,8 @@ impl TokenType {
             }
             TokenType::String => Token::String((ctx, text.to_string())),
             TokenType::Ident => {
-                //Check for "special identifiers", which will make this become a specific node (such as `bool` -> Token::TypeDec(Bool))
+                //Check for keywords, treated as "special identifiers",
+                //When matched, these make this become a more specific token (such as `bool` -> Token::TypeDec(Bool))
                 match text {
                     //Types and special literals
                     "i32" => Token::TypeDec((ctx, Type::Int32)),

@@ -4,9 +4,10 @@ use std::{
 };
 
 use crate::{
-    ast::{ASTNode, ASTNodeType, Value},
+    ast::{ASTNode, ASTNodeType},
     tree::{Node, NodeId, Tree},
-    verify::Type,
+    utils::{format_compact, PREFIX_IDENT},
+    value::{Type, Value},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -271,12 +272,22 @@ impl IRAST {
                 let tmp = ir_tree.new_node(IRNode::Add);
                 single_parent_id!(tmp);
 
+                //Find out what the type of this variable is
+                let t = {
+                    if let Some(t) = t {
+                        *t
+                    } else {
+                        // return Err(anyhow::format_err!(
+                        //     "VariableDef `{name}` has a type which is currently unknown"
+                        // ))
+                        todo!()
+                    }
+                };
+
                 //Generate the identifier and replace the temporary data
                 let ident = ident_stack.new_ident(IdentInfo::Var {
                     name: name.clone(),
-                    t: t.ok_or(anyhow::format_err!(
-                        "VariableDef `{name}` has a type which is currently unknown"
-                    ))?,
+                    t,
                 });
                 ir_tree[tmp].data = IRNode::VarDef(ident);
             }
@@ -387,7 +398,7 @@ impl IRAST {
                 }
             };
             if mangle {
-                *var_name = format!("_{}_{}", ident_count, var_name);
+                *var_name = format!("{PREFIX_IDENT}{}_{}", format_compact(ident_count), var_name);
                 ident_count += 1;
             }
         }

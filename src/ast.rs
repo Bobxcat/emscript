@@ -3,7 +3,7 @@ use std::{
     ops::{Add, Div, Mul, Range, Sub},
 };
 
-use crate::verify::Type;
+use crate::value::{Type, Value};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ASTNode {
@@ -70,87 +70,6 @@ impl Display for ASTNode {
         };
         write!(f, "{}", s)
         // write!(f, "[scope:{}]{}", self.scope_depth, s)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Value {
-    /// A value without a value
-    Void,
-    Bool(bool),
-    /// An integer of unknown size (defaults to i32, stored as i128 until implicit typing is figured out)
-    Int(i128),
-    Int32(i32),
-    String(String),
-}
-
-macro_rules! bin_op_match {
-    ($lhs:ident, $rhs:ident, $sym:tt) => {
-        //An operation between an unsized generic type (ie. `Int`, `Float`) and a sized counterpart (`Int32`, `Int64`, etc.) coerces the unsized value to the sized type
-        //match (self, rhs) {
-        match ($lhs, $rhs) {
-            //Integers
-            (Int(lhs), Int(rhs)) => Ok(Int(lhs $sym rhs)),
-
-            (Int32(lhs), Int(rhs)) => Ok(Int32(lhs $sym rhs as i32)),
-            (Int(lhs), Int32(rhs)) => Ok(Int32(lhs as i32 $sym rhs)),
-            (Int32(lhs), Int32(rhs)) => Ok(Int32(lhs $sym rhs )),
-
-            //Other
-
-            _ => Err(()),
-        }
-    }
-}
-
-macro_rules! arithmetic_impl_for_value {
-    ($trait:ident, $trait_fn:ident, $sym:tt) => {
-        impl $trait for Value {
-            type Output = Result<Value, ()>;
-
-            fn $trait_fn(self, rhs: Self) -> Self::Output {
-                use Value::*;
-                bin_op_match!(self, rhs, $sym)
-            }
-        }
-    };
-}
-
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        use Value::*;
-        match (self, other) {
-            //Integers
-            (Int(lhs), Int(rhs)) => Some(lhs.cmp(rhs)),
-
-            (Int32(lhs), Int(rhs)) => Some(lhs.cmp(&((*rhs) as i32))),
-            (Int(lhs), Int32(rhs)) => Some(((*lhs) as i32).cmp(rhs)),
-            (Int32(lhs), Int32(rhs)) => Some(lhs.cmp(rhs)),
-            //Bool
-            (Bool(lhs), Bool(rhs)) => Some(lhs.cmp(rhs)),
-            //...
-            _ => None,
-        }
-    }
-}
-
-arithmetic_impl_for_value!(Add, add, +);
-arithmetic_impl_for_value!(Sub, sub, -);
-arithmetic_impl_for_value!(Mul, mul, *);
-arithmetic_impl_for_value!(Div, div, /);
-
-impl Display for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use Value::*;
-        let s = match self {
-            Void => format!("Void()"),
-            Bool(b) => format!("Bool({b})"),
-            Int(n) => format!("Int[?]({n})"),
-            Int32(n) => format!("Int32({n})"),
-            String(s) => format!("String({s})"),
-        };
-
-        write!(f, "{}", s)
     }
 }
 

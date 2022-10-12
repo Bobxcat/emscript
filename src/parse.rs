@@ -18,10 +18,10 @@ fn new_node(
 pomelo! {
     %include {
         use crate::*;
-        use ast::{ ASTNode, ASTNodeType::*, StringContext, Value };
+        use ast::{ ASTNode, ASTNodeType::*, StringContext };
         use prim_tree::PrimNode;
         use tree::Tree;
-        use verify::Type;
+        use value::{Type, Value};
         use super::{list_to_last_value_return, new_node};
     }
 
@@ -151,7 +151,7 @@ use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     prim_tree::PrimNode,
     tree::{NodeId, Tree},
-    verify::Type,
+    value::Type,
 };
 
 fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: usize) {

@@ -14,7 +14,7 @@ use crate::{
     ast::{ASTNode, StringContext},
     c_ast::{ast_to_cast, cast_to_string},
     tree::{NodeId, Tree},
-    verify::Type,
+    value::Type,
 };
 /// An error was ecountered during runtime. These should be few and far between, as emscript is designed to avoid a heavy runtime
 ///

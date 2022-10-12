@@ -16,6 +16,7 @@ extern crate wasmer;
 extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
+extern crate radix_fmt;
 extern crate wasmer_engine_universal;
 
 mod ast;
@@ -24,10 +25,13 @@ mod ir;
 mod parse;
 mod prim_tree;
 mod runtime;
+/// A module with helper methods in it
+mod utils;
 // mod rust_ast;
 mod token;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
 mod tree;
+mod value;
 mod verify;
 
 fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {

@@ -5,21 +5,22 @@ use std::{
 };
 
 use crate::{
-    ast::{ASTNode, ASTNodeType, Value},
+    ast::{ASTNode, ASTNodeType},
     ir::{IRNode, IdentInfo, IRAST},
     tree::{NodeId, Tree},
-    verify::Type,
+    utils::{format_compact, PREFIX_TMP},
+    value::{Type, Value},
 };
 
 lazy_static! {
-    static ref C_TMP_VAR_COUNT: Mutex<usize> = Mutex::new(0);
+    static ref C_TMP_VAR_COUNT: Mutex<u128> = Mutex::new(0);
 }
 
 /// Generates a globally unique tmp variable name
 fn generate_tmp() -> String {
     let mut count = C_TMP_VAR_COUNT.lock().unwrap();
     //Prefix is five underscores
-    let s = format!("_____tmp_{}", count);
+    let s = format!("{PREFIX_TMP}{}", format_compact(*count));
     *count += 1;
     s
 }
@@ -283,44 +284,6 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>) -> anyhow::Result<Tree<CASTNode>> {
     )
 }
 
-// /// Mangles the input `ast` in such a way that all identifiers are globally unique
-// ///
-// /// For example:
-// ///
-// /// `let b = {let a = 3; let b = {let a = 4; a}; let c = {let a = 4; a}; b + c}`
-// ///
-// /// would be turned into something like:
-// ///
-// /// `let _0_b = {let _0_a = 3; let _1_b = {let _1_a = 4; _1_a}; let _1_c = {let _2_a = 4; _2_a} _1_b}`
-// fn mangle_ast(ast: &mut Tree<ASTNode>) -> anyhow::Result<()> {
-//     mangle_ast_recurse(ast, ast.find_head().unwrap(), &mut 0, &mut HashMap::new());
-//     Ok(())
-// }
-
-// fn mangle_ast_recurse(
-//     ast: &mut Tree<ASTNode>,
-//     curr: NodeId,
-//     ident_count: &mut usize,
-//     var_replacements: &mut HashMap<String, String>,
-// ) {
-//     let parent = ast[curr].parent.unwrap();
-//     /// Generates a new unique identifier using the supplied base name
-//     macro_rules! gen_ident {
-//         ($base_name:expr) => {{
-//             let s = format!("_{}_{}", *ident_count, $base_name);
-//             *ident_count += 1;
-//             s
-//         }};
-//     }
-//     //If the current scope is deeper than the parent, generate a new hashmap to be passed among the children
-//     let vars = var_replacements;
-//     if ast[curr].data.scope_depth > ast[parent].data.scope_depth {
-//         //*vars = var_replacements.clone()
-//     }
-
-//     todo!()
-// }
-
 /// * `ast` - The input AST for EmScript code
 /// * `curr_ast` - The current node to be evaluated in `ast`
 /// * `expr_tmp_vars` - The name of the variable which should be assigned to in this
@@ -431,6 +394,34 @@ fn ir_ast_to_cast_recurse(
                     "An assignment [VarDef] occured with `return_var = {return_var:?}`, when assignment returns void"
                 ));
             }
+        }
+        //Assignments are just variable definitions without the declaration
+        IRNode::Assign(id) => {
+            let name = ast[*id].name();
+
+            if let None = &return_var {
+                let parent = cast.new_node(CASTNode::Ignore);
+
+                //Compile the rhs with `name` as return_var
+                {
+                    let brackets = cast.new_node(CASTNode::Brackets);
+                    let mut rhs = recurse_child!(0, Some(name.clone()));
+
+                    cast.append_tree(brackets, &mut rhs)?;
+                    cast.append_to(parent, brackets)?;
+                }
+            } else {
+                return Err(anyhow::format_err!(
+                    "An assignment [Assign] occured with `return_var = {return_var:?}`, when assignment returns void"
+                ));
+            }
+            // if let Some(_return_var) = return_var.clone() {
+            //     single_parent!(CASTNode::Assign(name.clone()))
+            // } else {
+            //     return Err(anyhow::format_err!(
+            //         "An assignment occured with `return_var = None`"
+            //     ));
+            // }
         }
         IRNode::MethodDef(id) => {
             // Gather the method's information
@@ -690,16 +681,7 @@ fn ir_ast_to_cast_recurse(
             // return_var = {tmp_1} + {tmp_2};
             // todo!()
         }
-        IRNode::Assign(id) => {
-            let name = ast[*id].name();
-            if let Some(_return_var) = return_var.clone() {
-                single_parent!(CASTNode::Assign(name.clone()))
-            } else {
-                return Err(anyhow::format_err!(
-                    "An assignment occured with `return_var = None`"
-                ));
-            }
-        }
+
         //LastValueReturn:
         //When parent is a method def OR there is no parent OR the parent is also a LastValueReturn, ignore
         //When parent is an assignment, set final child to assignment and have the parent be brackets
