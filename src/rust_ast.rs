@@ -132,7 +132,7 @@ pub fn ast_to_rast(ast: &Tree<ASTNode>) -> Tree<RASTNode> {
     // rast
 }
 
-/ A recursive method which works by substituting each node in `ast` with a corresponding subtree in `rast`
+/// A recursive method which works by substituting each node in `ast` with a corresponding subtree in `rast`
 fn ast_to_rast_substitution(
     ast: &Tree<ASTNode>,
     curr_ast: NodeId,

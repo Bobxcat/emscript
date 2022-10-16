@@ -26,5 +26,9 @@ pub fn format_compact(mut n: u128) -> String {
         v.push(c);
     }
 
+    // Since the least significant digits are added first, the order must be reversed
+    // For large strings, this is less efficient than computing the length with a logarithm
+    // and pre-allocating all the memory, setting the values in reverse order
+    v.reverse();
     String::from_utf8(v).unwrap()
 }

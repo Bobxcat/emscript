@@ -42,7 +42,7 @@ pomelo! {
     %type input Tree<ASTNode>;
     %type expr_seq Vec<PrimNode<ASTNode>>;
     %type expr_list Vec<PrimNode<ASTNode>>;
-    %type var_dec_list Vec<(Type, String)>;
+    %type var_dec_list Vec<(String, String)>;
     %type expr PrimNode<ASTNode>;
 
     %type Int i128;
@@ -51,7 +51,7 @@ pomelo! {
     %type Bool bool;
     %type Ident String;
     %type MethodCallStart String;
-    %type TypeDec Type;
+    // %type TypeDec Type;
 
     //TMP (so that the token(s) are defined)
     %nonassoc Comma;
@@ -78,8 +78,8 @@ pomelo! {
     expr_list ::= expr_list(mut L) Comma expr(A) { L.push(A); L }
 
     //A list of variable declarations is a comma-seperated list of pairs of `[type_name], [variable_name]` (such as: `bool a, bool b, i32 c`)
-    var_dec_list ::= TypeDec((_, t)) Ident((_, name)) { vec![(t, name)] }
-    var_dec_list ::= var_dec_list(mut L) Comma TypeDec((_, t)) Ident((_, name)) { L.push((t, name)); L }
+    var_dec_list ::= Ident((_, t_name)) Ident((_, name)) { vec![(t_name, name)] }
+    var_dec_list ::= var_dec_list(mut L) Comma Ident((_, t_name)) Ident((_, name)) { L.push((t_name, name)); L }
 
     //Methods
 
@@ -88,17 +88,17 @@ pomelo! {
         let body = list_to_last_value_return(L);
         new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![body])
     }
-    expr ::= Fn(ctx) MethodCallStart((_, s)) RParen Arrow TypeDec((_, return_type)) LBracket expr_seq(L) RBracket {
+    expr ::= Fn(ctx) MethodCallStart((_, s)) RParen Arrow Ident((_, ret)) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type, inputs: vec![] }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: vec![] }, ctx, vec![body])
     }
     expr ::= Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types.into_iter().map(|(t, name)| (Type::try_from_str(&t).unwrap(), name)).collect() }, ctx, vec![body])
     }
-    expr ::= Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow TypeDec((_, return_type)) LBracket expr_seq(L) RBracket {
+    expr ::= Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow Ident((_, ret)) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type, inputs: input_types }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: input_types.into_iter().map(|(t, s)| (Type::try_from_str(&t).unwrap(), s)).collect() }, ctx, vec![body])
     }
 
     //Calling
@@ -125,7 +125,7 @@ pomelo! {
     //Identifiers
     expr ::= Ident((ctx, s)) { new_node(VariableRef { name: s }, ctx, vec![]) };
     expr ::= Let Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: None }, ctx, vec![rhs]) };
-    expr ::= Let TypeDec((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(t) }, ctx, vec![rhs]) };
+    expr ::= Let Ident((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(Type::try_from_str(&t)?) }, ctx, vec![rhs]) };
     expr ::= LParen expr(A) RParen { A }
     expr ::= expr(A) Semicolon(ctx) { new_node(ValueConsume, ctx, vec![A]) };
 

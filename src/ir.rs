@@ -7,7 +7,7 @@ use crate::{
     ast::{ASTNode, ASTNodeType},
     tree::{Node, NodeId, Tree},
     utils::{format_compact, PREFIX_IDENT},
-    value::{Type, Value},
+    value::{CustomType, CustomTypeId, Type, Value},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -91,17 +91,22 @@ pub enum IdentInfo {
         params: Vec<IdentID>,
         return_type: Type,
     },
+    /// This identifier is a custom type, with the given ID
+    CustomType { name: String, id: usize },
 }
 
 impl IdentInfo {
     pub fn name(&self) -> &String {
         match self {
-            IdentInfo::Var { name, .. } | IdentInfo::Method { name, .. } => name,
+            IdentInfo::Var { name, .. }
+            | IdentInfo::Method { name, .. }
+            | IdentInfo::CustomType { name, .. } => name,
         }
     }
     pub fn return_type(&self) -> Type {
         match self {
-            IdentInfo::Var { t, .. } | IdentInfo::Method { return_type: t, .. } => *t,
+            IdentInfo::Var { t, .. } | IdentInfo::Method { return_type: t, .. } => t.clone(),
+            IdentInfo::CustomType { id, .. } => Type::Custom(CustomTypeId::Id(*id)),
         }
     }
     pub fn name_and_return_type(&self) -> (Type, &String) {
@@ -111,7 +116,8 @@ impl IdentInfo {
                 return_type: t,
                 name,
                 ..
-            } => (*t, name),
+            } => (t.clone(), name),
+            IdentInfo::CustomType { id, name } => (Type::Custom(CustomTypeId::Id(*id)), name),
         }
     }
 }
@@ -135,11 +141,14 @@ pub struct IRAST {
 /// When walking recursively through an AST, when a scope increase is encountered then `increase_scope()` is called
 /// and vice-versa
 ///
-/// This stack represents a way of seeing what identifiers are visible at a given point and which
+/// This stack represents a way of seeing what identifiers are visible at a given point as well as
+/// the global collection of all identifiers
 #[derive(Debug, Clone)]
 struct IdentScopeStack {
     /// Represents all identifiers which have *ever* been encountered by the stack
     global_idents: HashMap<IdentID, IdentInfo>,
+    /// Represents all custom types encountered. Should *not*
+    custom_types: HashMap<usize, CustomType>,
     /// Represents all identifiers which are currently visible (if this has been appropriately used walking the AST)
     ///
     /// More specifically, the name of some identifier put into this table will return the `IdentID` of the matching
@@ -160,6 +169,21 @@ impl IdentScopeStack {
     }
     pub fn decrease_scope(&mut self) {
         self.tables.pop();
+    }
+    pub fn new_custom_type(&mut self, info: CustomType) -> usize {
+        //Find a globally unique id
+        let id = {
+            let mut id = self.custom_types.len();
+            while !self.custom_types.contains_key(&id) {
+                id += 1;
+            }
+
+            id
+        };
+
+        self.custom_types.insert(id, info);
+
+        id
     }
     /// Generates a new identifier with the given information, updates `self` with the new ident, and returns its ID
     ///
@@ -211,8 +235,11 @@ impl IRAST {
         })
     }
     /// * `curr` - the current node in `ast` which is being transformed
-    /// * `idents` - the table of all identifiers that have existed in the program
-    /// * `ident_stack` - the table of identifiers
+    /// * `ident_stack` - the identifier stack
+    ///
+    /// Notes:
+    /// * Every single `CustomTypeId` in `ast` __*must*__ be `Name(_)`
+    /// * In the returned AST, every `CustomTypeId` will be `Id(_)`
     fn from_ast_recurse(
         ast: &Tree<ASTNode>,
         curr: NodeId,
@@ -275,7 +302,19 @@ impl IRAST {
                 //Find out what the type of this variable is
                 let t = {
                     if let Some(t) = t {
-                        *t
+                        match t {
+                            //At this point, the CustomTypeId is guaranteed to be `Name(_)`
+                            //However, when leaving
+                            Type::Custom(id) => match id {
+                                CustomTypeId::Name(name) => {
+                                    let ident_id = ident_stack.get_ident_from_name(name).ok_or(anyhow::format_err!("[VariableDef] Received a custom type name which was not a known identifier"))?;
+                                    let info = &ident_stack.global_idents[&ident_id];
+                                    info.return_type()
+                                }
+                                _ => unreachable!(),
+                            },
+                            _ => t.clone(),
+                        }
                     } else {
                         // return Err(anyhow::format_err!(
                         //     "VariableDef `{name}` has a type which is currently unknown"
@@ -301,7 +340,7 @@ impl IRAST {
                 for (t, s) in inputs {
                     let ident = ident_stack.new_ident(IdentInfo::Var {
                         name: s.clone(),
-                        t: *t,
+                        t: t.clone(),
                     });
                     params.push(ident);
                 }
@@ -309,7 +348,7 @@ impl IRAST {
                 let method_id = ident_stack.new_ident(IdentInfo::Method {
                     name: name.clone(),
                     params: params.clone(),
-                    return_type: *return_type,
+                    return_type: return_type.clone(),
                 });
                 // Finish by recursing with just this node as the parent
                 single_parent!(IRNode::MethodDef(method_id));
@@ -395,6 +434,9 @@ impl IRAST {
                     }
 
                     name
+                }
+                IdentInfo::CustomType { name, id } => {
+                    todo!()
                 }
             };
             if mangle {

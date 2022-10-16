@@ -83,6 +83,13 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
 
 //TODO:
 //1- currently, a variable declaration listed in `no_mangle_vars` *can* overlap with tmp/mangled vars
+//2- robust system for writing custom types in C. More importantly, recognize these identifiers and mangle them appropriately
+//  - provide the ability to convert `C` code into a `C` ast, or at least to recognize identifiers
+//  - IDEA: use format strings (or something like `$my_struct $my_ident`) to notate identifiers in the C code which reference
+//    outside the method and need to be mangled (including struct names/fields).
+//    _
+//  - when writing a custom struct, able to define the fields of the struct using `Type` accompanied by an un-mangled name
+//  - write the body of methods individually using these rules and provide the MethodDef info seperately
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
@@ -97,4 +104,21 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::format_compact;
+
+    #[test]
+    fn test_format_compact() {
+        const VALS: &[(u128, &str)] = &[
+            (14300987, "y0L5"),
+            (1943, "VL"),
+            (u128::MAX, "7n42DGM5Tflk9n8mt7Fhc7"),
+        ];
+        for (num, str_desired) in VALS {
+            assert_eq!(*str_desired, &format_compact(*num));
+        }
+    }
 }

@@ -77,8 +77,8 @@ impl TokenType {
                 //When matched, these make this become a more specific token (such as `bool` -> Token::TypeDec(Bool))
                 match text {
                     //Types and special literals
-                    "i32" => Token::TypeDec((ctx, Type::Int32)),
-                    "bool" => Token::TypeDec((ctx, Type::Bool)),
+                    // "i32" => Token::TypeDec((ctx, Type::Int32)),
+                    // "bool" => Token::TypeDec((ctx, Type::Bool)),
                     "true" => Token::Bool((ctx, true)),
                     "false" => Token::Bool((ctx, false)),
                     //Other keywords
