@@ -147,8 +147,12 @@ pub struct IRAST {
 struct IdentScopeStack {
     /// Represents all identifiers which have *ever* been encountered by the stack
     global_idents: HashMap<IdentID, IdentInfo>,
-    /// Represents all custom types encountered. Should *not*
-    custom_types: HashMap<usize, CustomType>,
+    /// Represents all custom types
+    env_custom_types: HashMap<usize, CustomType>,
+    // /// Represents all custom types
+    // ///
+    // /// Custom types have two properties
+    // user_custom_types: HashMap<usize, CustomType>,
     /// Represents all identifiers which are currently visible (if this has been appropriately used walking the AST)
     ///
     /// More specifically, the name of some identifier put into this table will return the `IdentID` of the matching
