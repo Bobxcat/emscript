@@ -18,43 +18,44 @@ pub enum Type {
 }
 
 /// Represents a custom type
+#[derive(Debug, Clone)]
 pub struct CustomType {
     pub name: String,
-    pub implementation: CustomTypeImpl,
+    // pub implementation: CustomTypeImpl,
 }
 
-pub struct CallbackMethodData {
-    /// The method called when
-    callback: Box<dyn FnMut(&mut CustomType, &[Value]) -> Value>,
-    /// The ordered list of parameter typings for this method
-    pub params: Vec<Type>,
-    /// The return type of this method
-    pub return_type: Type,
-}
+// pub struct CallbackMethodData {
+//     /// The method called when
+//     callback: Box<dyn FnMut(&mut CustomType, &[Value]) -> Value>,
+//     /// The ordered list of parameter typings for this method
+//     pub params: Vec<Type>,
+//     /// The return type of this method
+//     pub return_type: Type,
+// }
 
-/// The imlementation of a custom type.
-pub enum CustomTypeImpl {
-    /// A custom type which uses callbacks to Rust closures to implement functionality on objects of the type
-    ///
-    ///
-    Callback {
-        /// The fields of this custom type. These are all accessable to
-        pub_fields: HashMap<String, Type>,
-        methods: HashMap<String, CallbackMethodData>,
-    }, // /// Represents an implementation of a custom type done directly in `C`, storing its AST.
-       // /// Useful for builtin custom types, such as `String`
-       // ///
-       // /// All `CustomType`s with this impl *must* be provided to the compiler pre-compilation,
-       // /// and will be prepended to the rest of the generated code (with proper mangling)
-       // RawC {
-       //     c_ast: Tree<CASTNode>
-       // },
-       // /// Represents a custom type implementation written directly in EmScript,
-       // /// which will be compiled and prepended to the generated `C` file
-       // EmScriptRaw(String),
-       // /// Reprents a custom type which is written in the original `.em` file, provided in the program
-       // EmScript,
-}
+// /// The imlementation of a custom type.
+// pub enum CustomTypeImpl {
+//     /// A custom type which uses callbacks to Rust closures to implement functionality on objects of the type
+//     ///
+//     ///
+//     Callback {
+//         /// The fields of this custom type. These are all accessable to
+//         pub_fields: HashMap<String, Type>,
+//         methods: HashMap<String, CallbackMethodData>,
+//     }, // /// Represents an implementation of a custom type done directly in `C`, storing its AST.
+//        // /// Useful for builtin custom types, such as `String`
+//        // ///
+//        // /// All `CustomType`s with this impl *must* be provided to the compiler pre-compilation,
+//        // /// and will be prepended to the rest of the generated code (with proper mangling)
+//        // RawC {
+//        //     c_ast: Tree<CASTNode>
+//        // },
+//        // /// Represents a custom type implementation written directly in EmScript,
+//        // /// which will be compiled and prepended to the generated `C` file
+//        // EmScriptRaw(String),
+//        // /// Reprents a custom type which is written in the original `.em` file, provided in the program
+//        // EmScript,
+// }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustomTypeId {

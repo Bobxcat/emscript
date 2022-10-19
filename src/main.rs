@@ -27,6 +27,7 @@ mod runtime;
 /// A module with helper methods in it
 mod utils;
 // mod rust_ast;
+mod interface;
 mod token;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
 mod tree;
@@ -90,6 +91,19 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
 //    _
 //  - when writing a custom struct, able to define the fields of the struct using `Type` accompanied by an un-mangled name
 //  - write the body of methods individually using these rules and provide the MethodDef info seperately
+
+//HOW TO WRITE `.api` FILES:
+//- Each .api file consists of a sequence of method declarations and type declarations
+//  - Each method declaration is prefixed by either "export" or "import", signifying from the perspective of the runtime
+//      - "export" => the method is implemented by the runtime, called by code (for ex, methods on a class)
+//      - "import" => the method is implemented by the code, called by the runtime (for ex, game loop update methods)
+
+//NOTES ON APIs AND CUSTOM TYPES:
+//- Custom types are defined in .api files
+//- Their state is held by the WASM code but compiled in such a way to be easily translatable to a `CustomObjRef` in Rust
+//- Methods on classes are implemented as exported methods.
+//  - Their implementation is in the Rust runtime, where they are given a mutable `CustomObjRef` and any parameters
+//
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;

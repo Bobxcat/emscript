@@ -147,8 +147,8 @@ pub struct IRAST {
 struct IdentScopeStack {
     /// Represents all identifiers which have *ever* been encountered by the stack
     global_idents: HashMap<IdentID, IdentInfo>,
-    /// Represents all custom types
-    env_custom_types: HashMap<usize, CustomType>,
+    // /// Represents all custom types which currently exist
+    // env_custom_types: HashMap<usize, CustomType>,
     // /// Represents all custom types
     // ///
     // /// Custom types have two properties
@@ -164,6 +164,7 @@ impl IdentScopeStack {
     pub fn new() -> Self {
         Self {
             global_idents: HashMap::new(),
+
             tables: Vec::new(),
         }
     }
@@ -175,19 +176,20 @@ impl IdentScopeStack {
         self.tables.pop();
     }
     pub fn new_custom_type(&mut self, info: CustomType) -> usize {
-        //Find a globally unique id
-        let id = {
-            let mut id = self.custom_types.len();
-            while !self.custom_types.contains_key(&id) {
-                id += 1;
-            }
+        // //Find a globally unique id
+        // let id = {
+        //     let mut id = self.custom_types.len();
+        //     while !self.custom_types.contains_key(&id) {
+        //         id += 1;
+        //     }
 
-            id
-        };
+        //     id
+        // };
 
-        self.custom_types.insert(id, info);
+        // self.custom_types.insert(id, info);
 
-        id
+        // id
+        todo!()
     }
     /// Generates a new identifier with the given information, updates `self` with the new ident, and returns its ID
     ///
