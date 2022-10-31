@@ -14,3 +14,7 @@ fn hello() -> i32 {
     //return -3
     a / 2
 }
+
+fn tmp() -> bool {
+    1
+}

@@ -2,12 +2,12 @@ use std::{fmt::Display, ops::Range};
 
 use pomelo::pomelo;
 
-fn list_to_last_value_return(exprs: Vec<PrimNode<ASTNode>>) -> PrimNode<ASTNode> {
+pub(crate) fn list_to_last_value_return(exprs: Vec<PrimNode<ASTNode>>) -> PrimNode<ASTNode> {
     let ctx = exprs.last().unwrap().val.context.clone();
     new_node(ASTNodeType::LastValueReturn, ctx, exprs)
 }
 
-fn new_node(
+pub(crate) fn new_node(
     t: ASTNodeType,
     ctx: StringContext,
     children: Vec<PrimNode<ASTNode>>,

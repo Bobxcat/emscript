@@ -4,7 +4,7 @@ use std::{
 };
 
 use parse::parse;
-use runtime::RuntimeCfg;
+use runtime::{LoadedRuntime, RuntimeCfg};
 
 use crate::{runtime::Runtime, token::tokenize};
 
@@ -16,6 +16,7 @@ extern crate wasmer;
 extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
+// extern crate multimap;
 extern crate wasmer_engine_universal;
 
 mod ast;
@@ -34,7 +35,7 @@ mod tree;
 mod value;
 mod verify;
 
-fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
+fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<LoadedRuntime> {
     //Build Token stream
     let tokens = tokenize(raw)?;
     // if let Err(e) = tokens {
@@ -77,9 +78,10 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<Runtime> {
     // println!("wasm_dir: {}\n\n", wasm_path.display());
 
     println!("Running {}\n", wasm_path.display());
-    runtime.run_wasm(wasm_path).unwrap();
+    let loaded_runtime = runtime.load_wasm(wasm_path)?;
+    // runtime.run_wasm(wasm_path).unwrap();
 
-    Ok(runtime)
+    Ok(loaded_runtime)
 }
 
 //TODO:
@@ -114,7 +116,7 @@ fn main() -> anyhow::Result<()> {
         RuntimeCfg {
             print_cast: false,
             verbose_compile: false,
-            opt_level: Debug,
+            opt_level: NoOpt,
         },
     )?;
     Ok(())

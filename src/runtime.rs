@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use wasmer::{imports, Instance, MemoryType, Module, Store};
+use wasmer::{imports, Engine, Function, Instance, Memory, MemoryType, Module, Store};
 
 use crate::{
     ast::{ASTNode, StringContext},
@@ -105,12 +105,19 @@ impl MethodInfo {
     }
 }
 
+/// A runtime which has been loaded from an EmScript project
+#[derive(Debug, Clone)]
+pub struct LoadedRuntime {
+    store: Store,
+    memory: Memory,
+}
+
 /// Defines a runtime used to interpret from an AST
 #[derive(Debug, Clone)]
 pub struct Runtime {
     pub cfg: RuntimeCfg,
     /// Each method declaration stored as a pair of (method_name, (method_declaration, method_body))
-    pub(crate) method_declarations: HashMap<String, MethodInfo>, //TODO: Define external methods, Rc<state>?
+    // pub(crate) method_declarations: HashMap<String, MethodInfo>, //TODO: Define external methods, Rc<state>?
     target_path: PathBuf,
     c_dir: PathBuf,
     wasm_dir: PathBuf,
@@ -120,7 +127,7 @@ impl Runtime {
     fn new(cfg: RuntimeCfg) -> Self {
         Self {
             cfg,
-            method_declarations: HashMap::new(),
+            // method_declarations: HashMap::new(),
             target_path: "".into(),
             c_dir: "".into(),
             wasm_dir: "".into(),
@@ -276,7 +283,7 @@ impl Runtime {
         }
     }
 
-    pub fn run_wasm<P>(&self, wasm_path: P) -> anyhow::Result<()>
+    pub fn load_wasm<P>(&self, wasm_path: P) -> anyhow::Result<LoadedRuntime>
     where
         P: AsRef<Path>,
     {
@@ -293,30 +300,39 @@ impl Runtime {
         };
 
         let store = Store::default();
-        //NOT TUNED -- this is the dynamic memory given to the application, by default limited to 4GB
-        //(so that any compiler faults involving memory leaks won't crash the system)
-        //Note that each wasmer `Page` is [65536] bytes
-        let memory = {
-            let mem_type = MemoryType::new(32, None, false);
-            store.tunables().create_host_memory(
-                &mem_type,
-                &wasmer::vm::MemoryStyle::Dynamic {
-                    offset_guard_size: 0,
-                },
-            )?
-        };
+        // //NOT TUNED -- this is the dynamic memory given to the application, by default limited to 4GB
+        // //(so that any compiler faults involving memory leaks won't crash the system)
+        // //Note that each wasmer `Page` is [65536] bytes
+        // let memory = {
+        //     let mem_type = MemoryType::new(32, None, false);
+        //     store.tunables().create_host_memory(
+        //         &mem_type,
+        //         &wasmer::vm::MemoryStyle::Dynamic {
+        //             offset_guard_size: 0,
+        //         },
+        //     )?
+        // };
+
         let module = Module::new(&store, &wasm_bytes)?;
         // The module doesn't import anything, so we create an empty import object.
         let import_object = imports! {};
         let instance = Instance::new(&module, &import_object)?;
 
-        //Tmp
-        {
-            let hello = instance.exports.get_function("hello")?;
-            let hello_return = hello.call(&[])?;
-            println!("called `hello()`. Return value: {:#?}", hello_return);
+        let memory = instance.exports.get_memory("memory")?;
+        fn test_export_method() {
+            println!("test_export_method called");
         }
+        let f = Function::new_native(&store, test_export_method);
+        // //Tmp
+        // {
+        //     let hello = instance.exports.get_function("hello")?;
+        //     let hello_return = hello.call(&[])?;
+        //     println!("called `hello()`. Return value: {:#?}", hello_return);
+        // }
 
-        Ok(())
+        Ok(LoadedRuntime {
+            store,
+            memory: memory,
+        })
     }
 }
