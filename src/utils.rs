@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 pub const PREFIX_TMP: &str = "_tmp";
 //Prefix identifiers should have the most underscores, since user-provided idents can have
 pub const PREFIX_IDENT: &str = "_____";
@@ -31,4 +33,9 @@ pub fn format_compact(mut n: u128) -> String {
     // and pre-allocating all the memory, setting the values in reverse order
     v.reverse();
     String::from_utf8(v).unwrap()
+}
+
+/// A HashMap which stores multiple keys of possibly different types for each
+pub struct MultiMap<K, V, T> {
+    keymap: HashMap<K, V>,
 }

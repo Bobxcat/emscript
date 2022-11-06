@@ -125,6 +125,7 @@ pub struct MethodId(usize);
 //     callback: Box<dyn Fn(&[Value]) -> Value>,
 // }
 
+#[derive(Debug, Clone)]
 pub struct MethodImport {
     pub name: String,
     pub params: Vec<Type>,
@@ -135,6 +136,7 @@ pub struct MethodImport {
 ///
 /// Defines imported/exported methods, as well as (TODO) custom types.
 /// All `MethodId`s are guaranteed to be unique within the `Interface`
+#[derive(Debug, Clone)]
 pub struct Interface {
     // pub methods_export: MultiMap<MethodId, String, MethodExport>,
     pub methods_import: MultiMap<MethodId, String, MethodImport>,

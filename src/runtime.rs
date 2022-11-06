@@ -8,11 +8,12 @@ use std::{
 };
 
 use anyhow::bail;
-use wasmer::{imports, Engine, Function, Instance, Memory, MemoryType, Module, Store};
+use wasmer::{imports, Engine, Function, Instance, Memory, MemoryType, Module, Store, Universal};
 
 use crate::{
     ast::{ASTNode, StringContext},
     c_ast::{ast_to_cast, cast_to_string},
+    interface::Interface,
     tree::{NodeId, Tree},
     value::Type,
 };
@@ -105,17 +106,11 @@ impl MethodInfo {
     }
 }
 
-/// A runtime which has been loaded from an EmScript project
-#[derive(Debug, Clone)]
-pub struct LoadedRuntime {
-    store: Store,
-    memory: Memory,
-}
-
 /// Defines a runtime used to interpret from an AST
 #[derive(Debug, Clone)]
 pub struct Runtime {
     pub cfg: RuntimeCfg,
+    interface: Interface,
     /// Each method declaration stored as a pair of (method_name, (method_declaration, method_body))
     // pub(crate) method_declarations: HashMap<String, MethodInfo>, //TODO: Define external methods, Rc<state>?
     target_path: PathBuf,
@@ -124,17 +119,22 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    fn new(cfg: RuntimeCfg) -> Self {
+    fn new(cfg: RuntimeCfg, interface: Interface) -> Self {
         Self {
             cfg,
+            interface,
             // method_declarations: HashMap::new(),
             target_path: "".into(),
             c_dir: "".into(),
             wasm_dir: "".into(),
         }
     }
-    pub fn new_init(ast: &Tree<ASTNode>, cfg: RuntimeCfg) -> Result<Self, RuntimeErr> {
-        let mut r = Self::new(cfg);
+    pub fn new_init(
+        ast: &Tree<ASTNode>,
+        cfg: RuntimeCfg,
+        interface: Interface,
+    ) -> Result<Self, RuntimeErr> {
+        let mut r = Self::new(cfg, interface);
         // r.init(ast)?;
         Ok(r)
     }
@@ -283,7 +283,7 @@ impl Runtime {
         }
     }
 
-    pub fn load_wasm<P>(&self, wasm_path: P) -> anyhow::Result<LoadedRuntime>
+    pub fn load_wasm<P>(&self, wasm_path: P) -> anyhow::Result<Instance>
     where
         P: AsRef<Path>,
     {
@@ -291,27 +291,11 @@ impl Runtime {
 
         let wasm_bytes = {
             let mut buf = Vec::new();
-            File::open(wasm_path)
-                .expect("Couldn't open `wasm` path")
-                .read_to_end(&mut buf)
-                .expect("Error encountered when reading `wasm` file");
-
+            File::open(wasm_path)?.read_to_end(&mut buf)?;
             buf
         };
 
-        let store = Store::default();
-        // //NOT TUNED -- this is the dynamic memory given to the application, by default limited to 4GB
-        // //(so that any compiler faults involving memory leaks won't crash the system)
-        // //Note that each wasmer `Page` is [65536] bytes
-        // let memory = {
-        //     let mem_type = MemoryType::new(32, None, false);
-        //     store.tunables().create_host_memory(
-        //         &mem_type,
-        //         &wasmer::vm::MemoryStyle::Dynamic {
-        //             offset_guard_size: 0,
-        //         },
-        //     )?
-        // };
+        let store = Store::new_with_tunables(Universal::new(), tunables);
 
         let module = Module::new(&store, &wasm_bytes)?;
         // The module doesn't import anything, so we create an empty import object.
@@ -319,6 +303,7 @@ impl Runtime {
         let instance = Instance::new(&module, &import_object)?;
 
         let memory = instance.exports.get_memory("memory")?;
+
         fn test_export_method() {
             println!("test_export_method called");
         }
@@ -330,9 +315,6 @@ impl Runtime {
         //     println!("called `hello()`. Return value: {:#?}", hello_return);
         // }
 
-        Ok(LoadedRuntime {
-            store,
-            memory: memory,
-        })
+        Ok(instance)
     }
 }

@@ -1,12 +1,16 @@
 use std::{
+    fs::File,
+    io::Read,
     path::{Path, PathBuf},
     str::FromStr,
 };
 
+use interface::Interface;
 use parse::parse;
-use runtime::{LoadedRuntime, RuntimeCfg};
+use runtime::RuntimeCfg;
+use wasmer::Instance;
 
-use crate::{runtime::Runtime, token::tokenize};
+use crate::{interface::compile_api, runtime::Runtime, token::tokenize};
 
 #[macro_use]
 extern crate lazy_static;
@@ -21,21 +25,20 @@ extern crate wasmer_engine_universal;
 
 mod ast;
 mod c_ast;
+mod interface;
 mod ir;
 mod parse;
 mod prim_tree;
 mod runtime;
-/// A module with helper methods in it
-mod utils;
-// mod rust_ast;
-mod interface;
 mod token;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
 mod tree;
+/// A module with helper methods in it
+mod utils;
 mod value;
 mod verify;
 
-fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<LoadedRuntime> {
+fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Result<Instance> {
     //Build Token stream
     let tokens = tokenize(raw)?;
     // if let Err(e) = tokens {
@@ -56,7 +59,7 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<LoadedRuntime> {
     println!("==AST==\n{}=======\n", ast);
 
     //At this point, a runtime needs to be created to proceed
-    let mut runtime = Runtime::new_init(&ast, cfg).unwrap();
+    let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
 
     // Verify AST << this is important, but should be moved to a step on `IRAST`
     // if let Err(e) = runtime.verify(&ast) {
@@ -107,8 +110,19 @@ fn compile_text(raw: &str, cfg: RuntimeCfg) -> anyhow::Result<LoadedRuntime> {
 //  - Their implementation is in the Rust runtime, where they are given a mutable `CustomObjRef` and any parameters
 //
 
+//Steps for a compilation
+//1- Parse the proper ".api" file into an `Interface` object
+//2-
+
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
+
+    let interface = {
+        let mut f = File::open("test.api")?;
+        let mut s = String::new();
+        f.read_to_string(&mut s);
+        compile_api(&s)?
+    };
 
     let raw = include_str!("test.em");
     let runtime = compile_text(
@@ -118,6 +132,7 @@ fn main() -> anyhow::Result<()> {
             verbose_compile: false,
             opt_level: NoOpt,
         },
+        interface,
     )?;
     Ok(())
 }
