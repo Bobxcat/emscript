@@ -21,6 +21,7 @@ extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
 // extern crate multimap;
+extern crate bimap;
 extern crate wasmer_engine_universal;
 
 mod ast;
@@ -123,6 +124,8 @@ fn main() -> anyhow::Result<()> {
         f.read_to_string(&mut s);
         compile_api(&s)?
     };
+
+    println!("Compiled interface:\n{:#?}", interface);
 
     let raw = include_str!("test.em");
     let runtime = compile_text(

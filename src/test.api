@@ -1,3 +1,5 @@
+//#default[String, Stdio]
+
 export fn foo(i32 a, i32 b) -> i32 {
     a + b
 }

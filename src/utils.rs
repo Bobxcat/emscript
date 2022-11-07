@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, hash::Hash, rc::Rc};
+
+use bimap::BiMap;
 
 pub const PREFIX_TMP: &str = "_tmp";
 //Prefix identifiers should have the most underscores, since user-provided idents can have
@@ -35,7 +37,30 @@ pub fn format_compact(mut n: u128) -> String {
     String::from_utf8(v).unwrap()
 }
 
-/// A HashMap which stores multiple keys of possibly different types for each
-pub struct MultiMap<K, V, T> {
-    keymap: HashMap<K, V>,
-}
+// /// A HashMap which stores multiple keys of possibly different types for each value
+// #[derive(Clone, Debug)]
+// pub struct MultiMap<K, V, T>
+// where
+//     K: Hash + Eq,
+//     V: Hash + Eq,
+// {
+//     kmap: HashMap<V, Rc<K>>,
+//     vmap: HashMap<Rc<K>, T>,
+// }
+
+// impl<K, V, T> MultiMap<K, V, T>
+// where
+//     K: Hash + Eq,
+//     V: Hash + Eq,
+// {
+//     pub fn insert(&mut self, k1: K, k2: V, val: T) -> Option<T> {
+//         let k1 = Rc::new(k1);
+//         //It doesn't matter wether or not this insert is `Some(_)` or `None`,
+//         //since the same will be true for `self.vmap`
+//         self.kmap.insert(k2, k1);
+//         self.vmap.insert(k1, val)
+//     }
+//     pub fn get_k1(&self, k: K) -> Option<&T> {
+
+//     }
+// }

@@ -8,7 +8,7 @@ use crate::{
     value::{Type, Value},
 };
 
-use multi_map::MultiMap;
+// use multi_map::MultiMap;
 use pomelo::pomelo;
 
 use self::parse_interface::Token;
@@ -149,29 +149,10 @@ impl Interface {
             methods_import: MultiMap::new(),
         }
     }
-    // fn add_export(&mut self, method: MethodExport, id: MethodId) {
-    //     let name = method.name.clone();
-    //     self.methods_export.insert(id, name, method);
-    // }
     fn add_import(&mut self, method: MethodImport, id: MethodId) {
         let name = method.name.clone();
         self.methods_import.insert(id, name, method);
     }
-    // fn populate(&mut self, ast: &Tree<ASTNode>) {
-    //     let mut highest_method_id = 0;
-    //     for n in ast {
-    //         match &ast[n].data.t {
-    //             crate::ast::ASTNodeType::MethodDef {
-    //                 name,
-    //                 inputs,
-    //                 return_type,
-    //             } => todo!(),
-    //             crate::ast::ASTNodeType::LastValueReturn => (),
-    //             crate::ast::ASTNodeType::ValueConsume => (),
-    //             _ => unimplemented!(),
-    //         }
-    //     }
-    // }
     fn populate(&mut self, methods: &Vec<InterfaceMethodDec>) {
         let mut id = 0;
         for m in methods {
