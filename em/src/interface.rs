@@ -164,7 +164,7 @@ impl Interface {
     }
     /// Verifies that `self` covers exactly `interface_decs`
     ///
-    /// WARNING: Currently does no type checking (i.e. arguments could be mismatched)
+    /// WARNING: Currently does no type checking (i.e. arguments/return types could be mismatched)
     fn verify(&self, interface_decs: &Vec<InterfaceMethodDec>) -> Result<(), Vec<ApiErr>> {
         let mut wasm_imports_used = HashSet::new();
         let mut errs = Vec::new();

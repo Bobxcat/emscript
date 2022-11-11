@@ -224,7 +224,7 @@ impl Runtime {
                 println!("==CAST==\n{}\n========", main_cast);
             }
 
-            let main_txt = cast_to_string(&main_cast);
+            let main_txt = format!("{}", cast_to_string(&main_cast));
             create_file_root!("main.c", main_txt.as_bytes());
         }
 
