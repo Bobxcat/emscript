@@ -6,12 +6,18 @@ use std::{
     str::FromStr,
 };
 
+use em_proc::generate_translation_with_sizes;
 use interface::Interface;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wasmer::Instance;
+use wasmer::{Function, Instance, Store};
 
-use crate::{interface::compile_api, runtime::Runtime, token::tokenize};
+use crate::{
+    interface::{compile_api, MethodImport, WasmEnv},
+    runtime::Runtime,
+    token::tokenize,
+    traits::GetRefFromMem,
+};
 
 #[macro_use]
 extern crate lazy_static;
@@ -44,11 +50,6 @@ mod verify;
 fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Result<Instance> {
     //Build Token stream
     let tokens = tokenize(raw)?;
-    // if let Err(e) = tokens {
-    //     println!("TokenizeError: {:#?}", e);
-    //     return Err(e);
-    // }
-    // let tokens = tokens.unwrap();
 
     //Build AST
     let ast = parse(tokens.clone());
@@ -63,15 +64,6 @@ fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Res
 
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
-
-    // Verify AST << this is important, but should be moved to a step on `IRAST`
-    // if let Err(e) = runtime.verify(&ast) {
-    // println!("Errors encountered verifying AST:\n");
-    // for e in e {
-    // println!("{e}\n");
-    // }
-    // return;
-    // }
 
     //Compile the AST to rust
 
@@ -120,11 +112,33 @@ fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Res
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
 
+    let store = Store::default();
+    let env = WasmEnv::default();
+
+    let interface = {
+        fn print_c(s: &str) {
+            print!("{s}")
+        }
+        let mut interface = Interface::default();
+        interface.insert(MethodImport {
+            mod_name: "env".to_string(),
+            method_name: "print".to_string(),
+            f: Function::new_native_with_env(
+                &store,
+                env.clone(),
+                generate_translation_with_sizes!(
+                    fn print_c(&str); (1)
+                ),
+            ),
+        });
+        interface
+    };
+
     let interface = {
         let mut f = File::open("test.api")?;
         let mut s = String::new();
         f.read_to_string(&mut s);
-        compile_api(&s)?
+        compile_api(&s, interface)?
     };
 
     println!("Compiled interface:\n{:#?}", interface);

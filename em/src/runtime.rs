@@ -287,34 +287,35 @@ impl Runtime {
     where
         P: AsRef<Path>,
     {
-        let wasm_path: &Path = wasm_path.as_ref();
+        todo!();
+        // let wasm_path: &Path = wasm_path.as_ref();
 
-        let wasm_bytes = {
-            let mut buf = Vec::new();
-            File::open(wasm_path)?.read_to_end(&mut buf)?;
-            buf
-        };
+        // let wasm_bytes = {
+        //     let mut buf = Vec::new();
+        //     File::open(wasm_path)?.read_to_end(&mut buf)?;
+        //     buf
+        // };
 
-        let store = Store::new_with_tunables(Universal::new(), tunables);
+        // let store = Store::new_with_tunables(Universal::new(), tunables);
 
-        let module = Module::new(&store, &wasm_bytes)?;
-        // The module doesn't import anything, so we create an empty import object.
-        let import_object = imports! {};
-        let instance = Instance::new(&module, &import_object)?;
+        // let module = Module::new(&store, &wasm_bytes)?;
+        // // The module doesn't import anything, so we create an empty import object.
+        // let import_object = imports! {};
+        // let instance = Instance::new(&module, &import_object)?;
 
-        let memory = instance.exports.get_memory("memory")?;
+        // let memory = instance.exports.get_memory("memory")?;
 
-        fn test_export_method() {
-            println!("test_export_method called");
-        }
-        let f = Function::new_native(&store, test_export_method);
-        // //Tmp
-        // {
-        //     let hello = instance.exports.get_function("hello")?;
-        //     let hello_return = hello.call(&[])?;
-        //     println!("called `hello()`. Return value: {:#?}", hello_return);
+        // fn test_export_method() {
+        //     println!("test_export_method called");
         // }
+        // let f = Function::new_native(&store, test_export_method);
+        // // //Tmp
+        // // {
+        // //     let hello = instance.exports.get_function("hello")?;
+        // //     let hello_return = hello.call(&[])?;
+        // //     println!("called `hello()`. Return value: {:#?}", hello_return);
+        // // }
 
-        Ok(instance)
+        // Ok(instance)
     }
 }
