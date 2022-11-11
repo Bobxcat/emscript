@@ -1,3 +1,4 @@
+#![feature(ptr_metadata)]
 use std::{
     fs::File,
     io::Read,
@@ -32,6 +33,7 @@ mod parse;
 mod prim_tree;
 mod runtime;
 mod token;
+mod traits;
 /// The entire `tree` module is copied from the `ripstop` project on GitHub
 mod tree;
 /// A module with helper methods in it
