@@ -4,13 +4,7 @@ use std::{
     fmt::Display,
 };
 
-use crate::{
-    ast::{ASTNode, StringContext},
-    interface::parse_interface::Parser,
-    token::tokenize,
-    tree::Tree,
-    value::{Type, Value},
-};
+use crate::{ast::StringContext, interface::parse_interface::Parser, token::tokenize, value::Type};
 
 // use multi_map::MultiMap;
 use pomelo::pomelo;
@@ -73,11 +67,10 @@ impl InterfaceMethodType {
 pomelo! {
     %include {
         use crate::*;
-        use ast::{ ASTNode, ASTNodeType::*, StringContext };
+        use ast::{ ASTNode, StringContext };
         use prim_tree::PrimNode;
         use tree::Tree;
-        use value::{Type, Value};
-        use parse::{list_to_last_value_return, new_node};
+        use value::{Type};
         use super::InterfaceMethodDec;
         use super::InterfaceMethodType::*;
     }
@@ -159,9 +152,9 @@ impl Interface {
     pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
         self.wasm_imports.insert(imp.method_name.clone(), imp)
     }
-    fn get_import_by_name(&self, n: &str) -> Option<&MethodImport> {
-        self.wasm_imports.get(n)
-    }
+    // fn get_import_by_name(&self, n: &str) -> Option<&MethodImport> {
+    //     self.wasm_imports.get(n)
+    // }
     /// Verifies that `self` covers exactly `interface_decs`
     ///
     /// WARNING: Currently does no type checking (i.e. arguments/return types could be mismatched)
@@ -242,12 +235,18 @@ pub fn compile_api(raw: &str, interface: Interface) -> anyhow::Result<Interface>
     }
 
     //Collect the final AST
-    let mut interface_decs = p
+    let interface_decs = p
         .end_of_input()
         .map_err(|_| anyhow::format_err!("Parse EOI error"))?;
 
     interface.verify(&interface_decs).map_err(|err| {
-        anyhow::format_err!("Multiple errors encountered compiling API:\n{err:#?}",)
-    });
+        anyhow::format_err!(
+            "Multiple errors encountered compiling API:\n{}",
+            err.iter()
+                .map(|e| format!("{e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
     Ok(interface)
 }

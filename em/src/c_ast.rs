@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     ast::{ASTNode, ASTNodeType},
+    interface::Interface,
     ir::{IRNode, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::{format_compact, PREFIX_TMP},
@@ -32,6 +33,13 @@ pub enum CASTNode {
     Ignore,
     Literal(Value),
     MethodDef {
+        name: String,
+        inputs: Vec<(Type, String)>,
+        return_type: Type,
+    },
+    ExternMethodDef {
+        mod_name: String,
+        imp_name: String,
         name: String,
         inputs: Vec<(Type, String)>,
         return_type: Type,
@@ -122,6 +130,24 @@ impl std::fmt::Display for CASTNode {
                     .join(", ");
                 format!(
                     "{} {name}({inputs_string})",
+                    cast_type_to_string(return_type.clone())
+                )
+            }
+            ExternMethodDef {
+                mod_name,
+                imp_name,
+                name,
+                inputs,
+                return_type,
+            } => {
+                let inputs_string = inputs
+                    .clone()
+                    .into_iter()
+                    .map(|(t, name)| format!("{} {name}", cast_type_to_string(t)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "[mod_name: {mod_name}, imp_name: {imp_name}]extern {} {name}({inputs_string})",
                     cast_type_to_string(return_type.clone())
                 )
             }
@@ -245,6 +271,21 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
             let body_string = join_all_children!(""); //\n
             format!("{return_type_string} {name}({inputs_string}) {{\n{body_string}\n}}")
         }
+        CASTNode::ExternMethodDef {
+            mod_name,
+            imp_name,
+            name,
+            inputs,
+            return_type,
+        } => {
+            let inputs_string = inputs
+                .into_iter()
+                .map(|(t, name)| format!("{} {name}", cast_type_to_string(t.clone())))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let return_type_string = cast_type_to_string(return_type.clone());
+            format!("__attribute__((import_module(\"{mod_name}\"), import_name(\"{imp_name}\"))) extern {return_type_string} {name}({inputs_string});")
+        }
         CASTNode::MethodCall { name, inputs } => format!("{name}({})", inputs.join(", ")),
         CASTNode::If => format!("if ({}) {{{}}}", child!(0), child!(1)),
 
@@ -276,24 +317,47 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
     }
 }
 
-pub fn ast_to_cast(ast: &Tree<ASTNode>) -> anyhow::Result<Tree<CASTNode>> {
-    let mut ir_ast = IRAST::from_ast(ast)?;
+pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result<Tree<CASTNode>> {
+    let mut ir_ast = IRAST::from_ast(ast, &interface)?;
     ir_ast.mangle(vec!["hello"].into_iter().collect());
 
-    ir_ast_to_cast_recurse(
+    let mut used_wasm_imports = HashSet::new();
+
+    let mut ast = ir_ast_to_cast_recurse(
         &ir_ast,
         ast.find_head().expect("Couldn't find AST head"),
         None,
-    )
+        &mut used_wasm_imports,
+    )?;
+
+    //Add all the `extern` method declarations at the begining
+    let head = ast.find_head().unwrap();
+
+    for (name, mangled) in used_wasm_imports {
+        let imp = &interface.wasm_imports[&name];
+        let method_dec = ast.new_node(CASTNode::ExternMethodDef {
+            mod_name: imp.mod_name.clone(),
+            imp_name: name,
+            name: mangled,
+            inputs: vec![(Type::Int32, "s".into())],
+            return_type: Type::Void,
+        });
+        ast.prepend_to(head, method_dec)?;
+    }
+
+    Ok(ast)
 }
 
 /// * `ast` - The input AST for EmScript code
 /// * `curr_ast` - The current node to be evaluated in `ast`
 /// * `expr_tmp_vars` - The name of the variable which should be assigned to in this
+/// * `used_wasm_imports` - Denotes which `wasm_imports` have been used from the interface.
+/// The first of each tuple is the original method name, the latter is the mangled name
 fn ir_ast_to_cast_recurse(
     ast: &IRAST,
     curr_ast: NodeId,
     return_var: Option<String>,
+    used_wasm_imports: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Tree<CASTNode>> {
     let children = ast[curr_ast].children.clone();
 
@@ -311,11 +375,12 @@ fn ir_ast_to_cast_recurse(
             if !children.is_empty() {
                 for i in 0..children.len() - 1 {
                     let c = children[i];
-                    let mut c_tree = ir_ast_to_cast_recurse(ast, c, None)?;
+                    let mut c_tree = ir_ast_to_cast_recurse(ast, c, None, used_wasm_imports)?;
                     cast.append_tree(n, &mut c_tree)?;
                 }
                 let last_child = children.last().unwrap();
-                let mut c_tree = ir_ast_to_cast_recurse(ast, *last_child, return_var)?;
+                let mut c_tree =
+                    ir_ast_to_cast_recurse(ast, *last_child, return_var, used_wasm_imports)?;
                 cast.append_tree(n, &mut c_tree)?;
             }
         }};
@@ -326,7 +391,7 @@ fn ir_ast_to_cast_recurse(
             let n = cast.new_node($child);
             for i in 0..children.len() {
                 let c = children[i];
-                let mut c_tree = ir_ast_to_cast_recurse(ast, c, None)?;
+                let mut c_tree = ir_ast_to_cast_recurse(ast, c, None, used_wasm_imports)?;
                 cast.append_tree(n, &mut c_tree)?;
             }
         }};
@@ -336,7 +401,7 @@ fn ir_ast_to_cast_recurse(
     /// * `return_var`
     macro_rules! recurse_child {
         ($child_index:expr, $return_var:expr) => {
-            ir_ast_to_cast_recurse(ast, children[$child_index], $return_var)?
+            ir_ast_to_cast_recurse(ast, children[$child_index], $return_var, used_wasm_imports)?
         };
     }
 
@@ -495,7 +560,24 @@ fn ir_ast_to_cast_recurse(
                     return_type,
                 } = method_info
                 {
-                    (name, params, return_type.clone())
+                    (
+                        name,
+                        params
+                            .into_iter()
+                            .map(|id| (ast[*id].name().clone(), ast[*id].return_type()))
+                            .collect::<Vec<_>>(),
+                        return_type.clone(),
+                    )
+                } else if let IdentInfo::ExternMethod {
+                    imp_name,
+                    name,
+                    params,
+                    return_type,
+                    ..
+                } = method_info
+                {
+                    used_wasm_imports.insert((imp_name.clone(), name.clone()));
+                    (name, params.clone(), return_type.clone())
                 } else {
                     return Err(anyhow::format_err!(
                     "Should never happen: attempted to parse `MethodCall` whose identifier referred to a `Var`, not `Method` ({})",
@@ -513,7 +595,8 @@ fn ir_ast_to_cast_recurse(
             for i in 0..children.len() {
                 //Generate the temporary variable
                 let param_tmp_var = generate_tmp();
-                let t = ast[inputs[i]].return_type();
+                // let t = ast[inputs[i]].return_type();
+                let t = inputs[i].1.clone();
 
                 //Create the representation for the tmp var in `cast`
                 let semicolon = cast.new_node(CASTNode::Semicolon);

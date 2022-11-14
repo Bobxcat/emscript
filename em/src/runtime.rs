@@ -8,7 +8,10 @@ use std::{
 };
 
 use anyhow::bail;
-use wasmer::{imports, Engine, Function, Instance, Memory, MemoryType, Module, Store, Universal};
+use wasmer::{
+    imports, Engine, Exports, Function, ImportObject, Instance, Memory, MemoryType, Module, Store,
+    Universal,
+};
 
 use crate::{
     ast::{ASTNode, StringContext},
@@ -166,7 +169,6 @@ impl Runtime {
     {
         let target_dir: &Path = target_dir.as_ref();
         self.target_path = target_dir.to_path_buf();
-        // self.rust_dir = self.target_path.join("rust/");
         self.c_dir = self.target_path.join("c/");
         self.wasm_dir = self.target_path.join("wasm/");
 
@@ -218,7 +220,7 @@ impl Runtime {
 
         //main.c
         {
-            let main_cast = ast_to_cast(ast)?;
+            let main_cast = ast_to_cast(ast, &self.interface)?;
 
             if self.cfg.print_cast {
                 println!("==CAST==\n{}\n========", main_cast);
@@ -283,39 +285,38 @@ impl Runtime {
         }
     }
 
-    pub fn load_wasm<P>(&self, wasm_path: P) -> anyhow::Result<Instance>
+    pub fn load_wasm<P>(self, wasm_path: P, store: Store) -> anyhow::Result<Instance>
     where
         P: AsRef<Path>,
     {
-        todo!();
-        // let wasm_path: &Path = wasm_path.as_ref();
+        //Define the WASM environment
+        let import_obj = {
+            let mut import_obj = ImportObject::new();
 
-        // let wasm_bytes = {
-        //     let mut buf = Vec::new();
-        //     File::open(wasm_path)?.read_to_end(&mut buf)?;
-        //     buf
-        // };
+            //Create the namespace "env" and populate it using `interface`
+            let mut nm = Exports::new();
+            for (_, imp) in self.interface.wasm_imports {
+                nm.insert(imp.method_name, imp.f);
+            }
 
-        // let store = Store::new_with_tunables(Universal::new(), tunables);
+            import_obj.register("env", nm);
 
-        // let module = Module::new(&store, &wasm_bytes)?;
-        // // The module doesn't import anything, so we create an empty import object.
-        // let import_object = imports! {};
-        // let instance = Instance::new(&module, &import_object)?;
+            import_obj
+        };
 
-        // let memory = instance.exports.get_memory("memory")?;
+        //Load the WASM
+        let wasm_bytes = {
+            let mut buf = Vec::new();
+            File::open(wasm_path)?.read_to_end(&mut buf)?;
+            buf
+        };
 
-        // fn test_export_method() {
-        //     println!("test_export_method called");
-        // }
-        // let f = Function::new_native(&store, test_export_method);
-        // // //Tmp
-        // // {
-        // //     let hello = instance.exports.get_function("hello")?;
-        // //     let hello_return = hello.call(&[])?;
-        // //     println!("called `hello()`. Return value: {:#?}", hello_return);
-        // // }
+        //Define WASM runtime
+        let module = Module::new(&store, &wasm_bytes)?;
 
-        // Ok(instance)
+        //Finally, create the instance itself
+        let instance = Instance::new(&module, &import_obj)?;
+
+        Ok(instance)
     }
 }

@@ -9,6 +9,7 @@ fn hello() -> i32 {
         let i32 b = 7;
         b
     };
+    print(a);
     //a = -6
     a = a + hello_again(a);
     //return -3

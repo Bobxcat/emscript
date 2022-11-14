@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     ast::{ASTNode, ASTNodeType},
+    interface::Interface,
     tree::{Node, NodeId, Tree},
     utils::{format_compact, PREFIX_IDENT},
     value::{CustomType, CustomTypeId, Type, Value},
@@ -91,6 +92,13 @@ pub enum IdentInfo {
         params: Vec<IdentID>,
         return_type: Type,
     },
+    ExternMethod {
+        mod_name: String,
+        imp_name: String,
+        name: String,
+        params: Vec<(String, Type)>,
+        return_type: Type,
+    },
     /// This identifier is a custom type, with the given ID
     CustomType { name: String, id: usize },
 }
@@ -100,12 +108,15 @@ impl IdentInfo {
         match self {
             IdentInfo::Var { name, .. }
             | IdentInfo::Method { name, .. }
-            | IdentInfo::CustomType { name, .. } => name,
+            | IdentInfo::CustomType { name, .. }
+            | IdentInfo::ExternMethod { name, .. } => name,
         }
     }
     pub fn return_type(&self) -> Type {
         match self {
-            IdentInfo::Var { t, .. } | IdentInfo::Method { return_type: t, .. } => t.clone(),
+            IdentInfo::Var { t, .. }
+            | IdentInfo::Method { return_type: t, .. }
+            | IdentInfo::ExternMethod { return_type: t, .. } => t.clone(),
             IdentInfo::CustomType { id, .. } => Type::Custom(CustomTypeId::Id(*id)),
         }
     }
@@ -115,6 +126,11 @@ impl IdentInfo {
             | IdentInfo::Method {
                 return_type: t,
                 name,
+                ..
+            }
+            | IdentInfo::ExternMethod {
+                name,
+                return_type: t,
                 ..
             } => (t.clone(), name),
             IdentInfo::CustomType { id, name } => (Type::Custom(CustomTypeId::Id(*id)), name),
@@ -175,22 +191,6 @@ impl IdentScopeStack {
     pub fn decrease_scope(&mut self) {
         self.tables.pop();
     }
-    pub fn new_custom_type(&mut self, info: CustomType) -> usize {
-        // //Find a globally unique id
-        // let id = {
-        //     let mut id = self.custom_types.len();
-        //     while !self.custom_types.contains_key(&id) {
-        //         id += 1;
-        //     }
-
-        //     id
-        // };
-
-        // self.custom_types.insert(id, info);
-
-        // id
-        todo!()
-    }
     /// Generates a new identifier with the given information, updates `self` with the new ident, and returns its ID
     ///
     /// If `info.name()` is already an entry in `self.tables`, then it __will__ be overwritten.
@@ -230,10 +230,21 @@ impl IdentScopeStack {
 }
 
 impl IRAST {
-    pub fn from_ast(ast: &Tree<ASTNode>) -> anyhow::Result<Self> {
+    pub fn from_ast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result<Self> {
         //First, create an empty identifier stack. Note that the
         let mut ident_stack = IdentScopeStack::new();
-        let tree = Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack)?;
+        ident_stack.increase_scope();
+        for (name, imp) in &interface.wasm_imports {
+            ident_stack.new_ident(IdentInfo::ExternMethod {
+                mod_name: imp.mod_name.clone(),
+                imp_name: name.clone(),
+                name: name.clone(),
+                params: vec![("s".into(), Type::Int32)],
+                return_type: Type::Void,
+            });
+        }
+        let tree =
+            Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack, interface)?;
         // Self::from_ast_recurse(ast, &mut None, ast.find_head().unwrap(), &mut ident_stack)?;
         Ok(Self {
             tree,
@@ -250,6 +261,7 @@ impl IRAST {
         ast: &Tree<ASTNode>,
         curr: NodeId,
         ident_stack: &mut IdentScopeStack,
+        interface: &Interface,
     ) -> anyhow::Result<Tree<IRNode>> {
         // println!(
         //     "Current node: {}\nRaw Context: {:?}\nCurrent ident stack: {:#?}\n\n",
@@ -282,7 +294,7 @@ impl IRAST {
                     if ast[c].data.scope_depth > ast[prev].data.scope_depth {
                         ident_stack.increase_scope();
                     }
-                    let mut subtree = Self::from_ast_recurse(ast, c, ident_stack)?;
+                    let mut subtree = Self::from_ast_recurse(ast, c, ident_stack, interface)?;
                     // let mut subtree = recurse_on_id!(c);
                     ir_tree.append_tree($parent, &mut subtree)?;
 
@@ -432,7 +444,8 @@ impl IRAST {
         for ident in self.idents.values_mut() {
             let mut mangle = true;
             let var_name = match ident {
-                IdentInfo::Var { name, .. } => name,
+                //`no_mangle_methods` does not include any ExternMethod so they can just be trated normally
+                IdentInfo::Var { name, .. } | IdentInfo::ExternMethod { name, .. } => name,
                 IdentInfo::Method { name, .. } => {
                     //If this method was in the list of no_mangle_methods, remove it and don't mangle it
                     if no_mangle_methods.remove(name.as_str()) {

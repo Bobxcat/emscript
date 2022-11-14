@@ -10,13 +10,12 @@ use em_proc::generate_translation_with_sizes;
 use interface::Interface;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wasmer::{Function, Instance, Store};
+use wasmer::{Function, Instance, NativeFunc, Store};
 
 use crate::{
     interface::{compile_api, MethodImport, WasmEnv},
     runtime::Runtime,
     token::tokenize,
-    traits::GetRefFromMem,
 };
 
 #[macro_use]
@@ -47,7 +46,18 @@ mod utils;
 mod value;
 mod verify;
 
-fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Result<Instance> {
+/// Compilation steps:
+/// - Generate an interface, providing methods for all exported methods (probably using `generate_translation_with_sizes!(..)`)
+/// - Compile the API, which checks to make sure that the exports given were complete and correct ///then populates the imports///
+/// - Generate an EmScript AST from the input code
+/// - Translate EmScript AST to IR AST, keeping track of exported methods (NOTE: the name of a method and its wasm-imported name can be different)
+
+fn compile_text(
+    raw: &str,
+    cfg: RuntimeCfg,
+    interface: Interface,
+    store: Store,
+) -> anyhow::Result<Instance> {
     //Build Token stream
     let tokens = tokenize(raw)?;
 
@@ -70,14 +80,11 @@ fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Res
     runtime.setup_target_dir_relative("./em_target/").unwrap();
 
     let _c_dir = runtime.compile_to_c(&mut ast).unwrap();
-    // println!("c_dir: {}", c_dir.display());
 
     let wasm_path = runtime.compile_c().unwrap();
-    // println!("wasm_dir: {}\n\n", wasm_path.display());
 
-    println!("Running {}\n", wasm_path.display());
-    let loaded_runtime = runtime.load_wasm(wasm_path)?;
-    // runtime.run_wasm(wasm_path).unwrap();
+    println!("Loading {}\n", wasm_path.display());
+    let loaded_runtime = runtime.load_wasm(wasm_path, store)?;
 
     Ok(loaded_runtime)
 }
@@ -103,11 +110,6 @@ fn compile_text(raw: &str, cfg: RuntimeCfg, interface: Interface) -> anyhow::Res
 //- Their state is held by the WASM code but compiled in such a way to be easily translatable to a `CustomObjRef` in Rust
 //- Methods on classes are implemented as exported methods.
 //  - Their implementation is in the Rust runtime, where they are given a mutable `CustomObjRef` and any parameters
-//
-
-//Steps for a compilation
-//1- Parse the proper ".api" file into an `Interface` object
-//2-
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
@@ -116,7 +118,7 @@ fn main() -> anyhow::Result<()> {
     let env = WasmEnv::default();
 
     let interface = {
-        fn print_c(s: &str) {
+        fn print_c(s: i32) {
             print!("{s}")
         }
         let mut interface = Interface::default();
@@ -127,7 +129,7 @@ fn main() -> anyhow::Result<()> {
                 &store,
                 env.clone(),
                 generate_translation_with_sizes!(
-                    fn print_c(&str); (1)
+                    fn print_c(i32); (1)
                 ),
             ),
         });
@@ -135,9 +137,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     let interface = {
-        let mut f = File::open("test.api")?;
+        let mut f = File::open("./src/test.api")?;
         let mut s = String::new();
-        f.read_to_string(&mut s);
+        f.read_to_string(&mut s)?;
         compile_api(&s, interface)?
     };
 
@@ -152,7 +154,17 @@ fn main() -> anyhow::Result<()> {
             opt_level: NoOpt,
         },
         interface,
+        store,
     )?;
+
+    //Now, call runtime methods
+    {
+        let f_hello: NativeFunc<(), i32> = runtime.exports.get_native_function("hello")?;
+        let f_hello_ret = f_hello.call()?;
+
+        println!("\nReturned from `hello(..)` call: {f_hello_ret}");
+    }
+
     Ok(())
 }
 

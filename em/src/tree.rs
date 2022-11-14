@@ -27,7 +27,6 @@ impl std::fmt::Display for TreeError {
 
 impl std::error::Error for TreeError {}
 
-//This mostly just makes recursion and such harder, though
 #[derive(Debug, Clone)]
 pub struct Tree<T> {
     nodes: Vec<Node<T>>,
@@ -225,6 +224,46 @@ impl<T> Tree<T> {
 
         let mut toappend = self.get_node_mut(toappendid)?;
         toappend.previous_sibling = sibling_id;
+        toappend.parent = Some(nodeid);
+
+        let old_depth = toappend.depth;
+
+        let children_to_update: Vec<NodeId> = self.iter_subtree(toappendid).collect();
+        for c in children_to_update {
+            self.get_node_mut(c).unwrap().depth += parent_depth - old_depth + 1;
+        }
+
+        Ok(())
+    }
+
+    /// Identical to `append_to`, except that it appends `toappendid` as the first child instead of the last
+    pub fn prepend_to(&mut self, nodeid: NodeId, toappendid: NodeId) -> Result<(), TreeError> {
+        let parent_depth: u32;
+
+        let sibling_id = {
+            let node = self.get_node_mut(nodeid)?;
+            parent_depth = node.depth;
+
+            let children = &mut node.children;
+            if !children.is_empty() {
+                let sibling_id = children[0];
+
+                children.insert(0, toappendid);
+
+                Some(sibling_id)
+            } else {
+                children.insert(0, toappendid);
+                None
+            }
+        };
+
+        if let Some(sib_id) = sibling_id {
+            let mut sibling = self.get_node_mut(sib_id)?;
+            sibling.previous_sibling = Some(toappendid);
+        }
+
+        let mut toappend = self.get_node_mut(toappendid)?;
+        toappend.next_sibling = sibling_id;
         toappend.parent = Some(nodeid);
 
         let old_depth = toappend.depth;
