@@ -1,10 +1,5 @@
 #![feature(ptr_metadata)]
-use std::{
-    fs::{canonicalize, File},
-    io::Read,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use std::{fs::File, io::Read};
 
 use em_proc::generate_translation_with_sizes;
 use interface::Interface;
@@ -110,6 +105,11 @@ fn compile_text(
 //- Their state is held by the WASM code but compiled in such a way to be easily translatable to a `CustomObjRef` in Rust
 //- Methods on classes are implemented as exported methods.
 //  - Their implementation is in the Rust runtime, where they are given a mutable `CustomObjRef` and any parameters
+
+//Custom types
+//1- When parsing `.api`, collect a HashMap of custom types. These are marked as external
+//2- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
+//                                                                      ^^This caveat is also true for methods
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;

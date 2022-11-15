@@ -334,10 +334,10 @@ impl IRAST {
                             _ => t.clone(),
                         }
                     } else {
-                        // return Err(anyhow::format_err!(
-                        //     "VariableDef `{name}` has a type which is currently unknown"
-                        // ))
-                        todo!()
+                        todo!(
+                            "\n\nType inferencing is not yet supported. Consider adding an explicit type, such as `i32` \n{}\n",
+                            &ast[curr].data.context
+                        )
                     }
                 };
 

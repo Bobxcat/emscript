@@ -6,7 +6,6 @@ use std::{
 
 use crate::{ast::StringContext, interface::parse_interface::Parser, token::tokenize, value::Type};
 
-// use multi_map::MultiMap;
 use pomelo::pomelo;
 use wasmer::{Function, LazyInit, Memory, WasmerEnv};
 
