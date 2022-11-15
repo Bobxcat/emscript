@@ -1,6 +1,6 @@
 #![feature(ptr_metadata)]
 use std::{
-    fs::File,
+    fs::{canonicalize, File},
     io::Read,
     path::{Path, PathBuf},
     str::FromStr,
@@ -137,7 +137,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     let interface = {
-        let mut f = File::open("./src/test.api")?;
+        //Uses the workspace's `Cargo.toml`
+        let mut f = File::open(r"./em/src/test.api")?;
         let mut s = String::new();
         f.read_to_string(&mut s)?;
         compile_api(&s, interface)?
