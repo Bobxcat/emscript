@@ -110,6 +110,9 @@ fn compile_text(
 //1- When parsing `.api`, collect a HashMap of custom types. These are marked as external
 //2- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
 //                                                                      ^^This caveat is also true for methods
+//      - Note that the custom types introduced in AST are not marked as external
+//3- _
+//4- _
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
