@@ -111,8 +111,8 @@ fn compile_text(
 //2- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
 //                                                                      ^^This caveat is also true for methods
 //      - Note that the custom types introduced in AST are not marked as external
-//3- _
-//4- _
+//3- When generating CAST: for now, replace custom type declarations with struct defs in C in-order.
+//      - Note that typedefs in C are ordered
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;

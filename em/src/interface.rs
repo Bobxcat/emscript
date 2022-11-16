@@ -6,8 +6,9 @@ use std::{
 
 use crate::{ast::StringContext, interface::parse_interface::Parser, token::tokenize, value::Type};
 
+use em_proc::generate_translation_with_sizes;
 use pomelo::pomelo;
-use wasmer::{Function, LazyInit, Memory, WasmerEnv};
+use wasmer::{Function, LazyInit, Memory, Store, WasmerEnv};
 
 use self::parse_interface::Token;
 
@@ -137,6 +138,11 @@ pub struct MethodImport {
     pub f: Function,
 }
 
+/// Represents a part of the standard library to be imported
+pub enum StdImport {
+    StdOut,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Interface {
     pub wasm_imports: HashMap<String, MethodImport>,
@@ -144,9 +150,27 @@ pub struct Interface {
 
 impl Interface {
     pub fn new() -> Self {
-        Self {
-            wasm_imports: HashMap::new(),
+        Self::default()
+    }
+    pub fn new_with_std(std_imps: Vec<StdImport>, store: &Store, env: &WasmEnv) -> Self {
+        let mut interface = Self::default();
+        for imp in std_imps {
+            interface.insert(match imp {
+                StdImport::StdOut => MethodImport {
+                    mod_name: "env".to_string(),
+                    method_name: "print".to_string(),
+                    f: Function::new_native_with_env(
+                        &store,
+                        env.clone(),
+                        generate_translation_with_sizes!(
+                            fn print_c(i32); (1)
+                        ),
+                    ),
+                },
+            });
         }
+
+        i
     }
     pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
         self.wasm_imports.insert(imp.method_name.clone(), imp)
