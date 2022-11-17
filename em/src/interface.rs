@@ -9,6 +9,7 @@ use crate::{
     interface::parse_interface::Parser,
     token::tokenize,
     traits::GetRefFromMem,
+    utils::MultiMap,
     value::{CustomTypeId, Type, TypeOrName},
 };
 
@@ -22,6 +23,40 @@ use self::parse_interface::Token;
 //2) runtime fills out callbacks for exports before compiling
 //3) after compilation, runtime finds
 
+/// Data passed along while parsing
+#[derive(Debug, Default, Clone)]
+struct ParseData {
+    v: Vec<InterfaceMethodDec>,
+    custom_types: MultiMap<CustomTypeId, String, CustomType>,
+}
+
+impl ParseData {
+    fn insert_custom_type(&mut self, t: CustomType) -> Option<CustomType> {
+        let name = t.name.clone();
+        let id = self.gen_unique_custom_type_id();
+        self.custom_types.insert(id, name, t)
+    }
+    fn str_to_type(&self, s: &str) -> Option<Type> {
+        let t = TypeOrName::from_str(s);
+        match t {
+            TypeOrName::T(t) => Some(t),
+            TypeOrName::Name(s) => self
+                .custom_types
+                .get_k_from_v(&s)
+                .map(|id| Type::Custom(*id)),
+        }
+    }
+    fn gen_unique_custom_type_id(&self) -> CustomTypeId {
+        let mut n = CustomTypeId(2 * self.custom_types.len());
+        while self.custom_types.contains_k(&n) {
+            n.0 += 1;
+        }
+
+        n
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct InterfaceMethodDec {
     ctx: StringContext,
     name: String,
@@ -35,9 +70,9 @@ impl InterfaceMethodDec {
         ctx: StringContext,
         name: String,
         params: Vec<(String, String)>,
-        ret: TypeOrName,
+        ret: Type,
         t: &str,
-        custom_types: HashMap<String, CustomType>,
+        custom_types: &HashMap<String, CustomType>,
     ) -> Option<Self> {
         Some(Self {
             ctx,
@@ -59,6 +94,7 @@ impl InterfaceMethodDec {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 enum InterfaceMethodType {
     /// Imported by the runtime from the code
     Import,
@@ -77,6 +113,10 @@ impl InterfaceMethodType {
     }
 }
 
+//TODO: Find a way to pass `ParseDat` along when parsing each `method_dec`
+//  Could use global state, would need to reset it on each parse (probably fine)
+//  `lazy_static`, probably
+
 pomelo! {
     %include {
         use crate::*;
@@ -91,11 +131,11 @@ pomelo! {
     //Every token needs to know its context
     %extra_token StringContext;
 
-    %type input Vec<InterfaceMethodDec>;
+    %type input ParseData;
 
     %type Ident String;
     %type MethodCallStart String;
-    %type method_seq Vec<InterfaceMethodDec>;
+    %type method_seq ParseData;
     %type method_dec InterfaceMethodDec;
     %type var_dec_list Vec<(String, String)>;
     %type expr PrimNode<ASTNode>;
@@ -106,9 +146,8 @@ pomelo! {
     };
 
     //A *sequence* of expresssions is multiple expressions that happen to be next to eachother (such as the body of a method)
-    method_seq ::= method_dec(A) { vec![A] }
-    method_seq ::= method_seq(mut L) method_dec(A) { L.push(A); L }
-
+    method_seq ::= method_dec(dec) { let mut parse_dat = ParseData::default(); parse_dat.v.push(A); parse_dat }
+    method_seq ::= method_seq(mut m_seq) method_dec(dec) { m_seq.v.push(dec); m_seq }
 
     //A list of variable declarations is a comma-seperated list of pairs of `[type_name], [variable_name]` (such as: `bool a, bool b, i32 c`)
     var_dec_list ::= Ident((_, t_name)) Ident((_, name)) { vec![(t_name, name)] }

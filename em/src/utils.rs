@@ -37,30 +37,77 @@ pub fn format_compact(mut n: u128) -> String {
     String::from_utf8(v).unwrap()
 }
 
-// /// A HashMap which stores multiple keys of possibly different types for each value
-// #[derive(Clone, Debug)]
-// pub struct MultiMap<K, V, T>
-// where
-//     K: Hash + Eq,
-//     V: Hash + Eq,
-// {
-//     kmap: HashMap<V, Rc<K>>,
-//     vmap: HashMap<Rc<K>, T>,
-// }
+/// A HashMap which stores multiple keys of possibly different types for each value
+///
+/// Generally, operations using `K` are faster than ones using `V`
+#[derive(Clone, Debug)]
+pub struct MultiMap<K, V, T>
+where
+    K: Hash + Eq + Clone,
+    V: Hash + Eq,
+{
+    kmap: HashMap<K, T>,
+    vmap: BiMap<V, K>,
+}
 
-// impl<K, V, T> MultiMap<K, V, T>
-// where
-//     K: Hash + Eq,
-//     V: Hash + Eq,
-// {
-//     pub fn insert(&mut self, k1: K, k2: V, val: T) -> Option<T> {
-//         let k1 = Rc::new(k1);
-//         //It doesn't matter wether or not this insert is `Some(_)` or `None`,
-//         //since the same will be true for `self.vmap`
-//         self.kmap.insert(k2, k1);
-//         self.vmap.insert(k1, val)
-//     }
-//     pub fn get_k1(&self, k: K) -> Option<&T> {
+impl<K, V, T> Default for MultiMap<K, V, T>
+where
+    K: Hash + Eq + Clone,
+    V: Hash + Eq,
+{
+    fn default() -> Self {
+        Self {
+            kmap: Default::default(),
+            vmap: Default::default(),
+        }
+    }
+}
 
-//     }
-// }
+impl<K, V, T> MultiMap<K, V, T>
+where
+    K: Hash + Eq + Clone,
+    V: Hash + Eq,
+{
+    pub fn insert(&mut self, k1: K, k2: V, val: T) -> Option<T> {
+        self.kmap.insert(k1.clone(), val)?;
+
+        //It doesn't matter wether or not this insert is `Some(_)` or `None`,
+        //since the same will be true for `self.kmap`
+        self.vmap.insert(k2, k1);
+
+        None
+    }
+    #[inline]
+    pub fn get_k(&self, k: &K) -> Option<&T> {
+        self.kmap.get(k)
+    }
+    #[inline]
+    pub fn get_v(&self, k: &V) -> Option<&T> {
+        self.get_k(self.vmap.get_by_left(k)?)
+    }
+    #[inline]
+    pub fn get_k_from_v(&self, k: &V) -> Option<&K> {
+        self.vmap.get_by_left(k)
+    }
+    #[inline]
+    pub fn get_v_from_k(&self, k: &K) -> Option<&V> {
+        self.vmap.get_by_right(k)
+    }
+    #[inline]
+    pub fn get_k_mut(&self, k: &K) -> Option<&mut T> {
+        self.kmap.get_mut(k)
+    }
+    #[inline]
+    pub fn get_v_mut(&self, k: &V) -> Option<&mut T> {
+        self.get_k_mut(self.vmap.get_by_left(k)?)
+    }
+    pub fn contains_k(&self, k: &K) -> bool {
+        self.kmap.contains_key(k)
+    }
+    pub fn contains_v(&self, k: &V) -> bool {
+        self.vmap.contains_left(k)
+    }
+    pub fn len(&self) -> usize {
+        self.kmap.len()
+    }
+}
