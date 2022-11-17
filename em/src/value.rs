@@ -6,7 +6,8 @@ use std::{
 
 use crate::{ast::ASTNodeType, c_ast::CASTNode, tree::Tree};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Represents a type, custom or builtin
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Type {
     Void,
     Bool,
@@ -21,92 +22,49 @@ pub enum Type {
 #[derive(Debug, Clone)]
 pub struct CustomType {
     pub name: String,
-    // pub implementation: CustomTypeImpl,
 }
 
-// pub struct CallbackMethodData {
-//     /// The method called when
-//     callback: Box<dyn FnMut(&mut CustomType, &[Value]) -> Value>,
-//     /// The ordered list of parameter typings for this method
-//     pub params: Vec<Type>,
-//     /// The return type of this method
-//     pub return_type: Type,
-// }
-
-// /// The imlementation of a custom type.
-// pub enum CustomTypeImpl {
-//     /// A custom type which uses callbacks to Rust closures to implement functionality on objects of the type
-//     ///
-//     ///
-//     Callback {
-//         /// The fields of this custom type. These are all accessable to
-//         pub_fields: HashMap<String, Type>,
-//         methods: HashMap<String, CallbackMethodData>,
-//     }, // /// Represents an implementation of a custom type done directly in `C`, storing its AST.
-//        // /// Useful for builtin custom types, such as `String`
-//        // ///
-//        // /// All `CustomType`s with this impl *must* be provided to the compiler pre-compilation,
-//        // /// and will be prepended to the rest of the generated code (with proper mangling)
-//        // RawC {
-//        //     c_ast: Tree<CASTNode>
-//        // },
-//        // /// Represents a custom type implementation written directly in EmScript,
-//        // /// which will be compiled and prepended to the generated `C` file
-//        // EmScriptRaw(String),
-//        // /// Reprents a custom type which is written in the original `.em` file, provided in the program
-//        // EmScript,
-// }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CustomTypeId {
-    Name(String),
-    Id(usize),
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CustomTypeId(usize);
 
 impl Display for CustomTypeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            CustomTypeId::Name(s) => s.clone(),
-            CustomTypeId::Id(id) => format!("{id}"),
-        };
-        write!(f, "{}", s)
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Represents either a type or the name of a type which has yet to be given a name
+#[derive(Debug, Clone)]
+pub enum TypeOrName {
+    T(Type),
+    Name(String),
+}
+
+impl Display for TypeOrName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                TypeOrName::T(t) => t.to_string(),
+                TypeOrName::Name(s) => s.to_string(),
+            }
+        )
+    }
+}
+
+impl TypeOrName {
+    pub fn from_str(s: &str) -> Self {
+        use Type::*;
+        Self::T(match s {
+            "bool" => Bool,
+            "i32" => Int32,
+            _ => return Self::Name(s.to_string()),
+        })
     }
 }
 
 impl Type {
-    pub fn try_from_str(s: &str) -> Result<Self, ()> {
-        use Type::*;
-        Ok(match s {
-            "void" => Void,
-            "bool" => Bool,
-            "i32" => Int32,
-            _ => Custom(CustomTypeId::Name(s.into())),
-        })
-    }
-    pub fn try_from_str_custom_types_with_id(
-        s: &str,
-        custom_types: &HashMap<usize, CustomType>,
-    ) -> Result<Self, ()> {
-        use Type::*;
-        Ok(match s {
-            "void" => Void,
-            "bool" => Bool,
-            "i32" => Int32,
-            _ => {
-                let id = {
-                    let mut res = Err(());
-                    for (id, t) in custom_types {
-                        if s == &t.name {
-                            res = Ok(*id);
-                            break;
-                        }
-                    }
-                    res?
-                };
-                Custom(CustomTypeId::Id(id))
-            }
-        })
-    }
     /// Returns `true` if `self` is coercable to `other`.
     /// To be more precise, this is if implicit conversion from `self` to `other` is permissible
     pub fn coercable_to(&self, other: &Type) -> bool {
@@ -175,7 +133,6 @@ impl Display for Type {
                 Type::Bool => "bool".into(),
                 Type::Int => "{integer}".into(),
                 Type::Int32 => "i32".into(),
-                // Type::String => "string",
                 Type::Custom(id) => format!("CustomType[{id}]"),
             }
         )

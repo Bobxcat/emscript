@@ -87,14 +87,14 @@ pub enum ASTNodeType {
     /// Contains a type which is `Some(_)` if the type of the variable has been determined, `None` otherwise
     ///
     /// `1` child
-    VariableDef { name: String, t: Option<Type> },
+    VariableDef { name: String, t: Option<TypeOrName> },
     /// The definition for a method. The body of the code is stored as a child of this node
     ///
     /// `1` child
     MethodDef {
         name: String,
-        inputs: Vec<(Type, String)>,
-        return_type: Type,
+        inputs: Vec<(TypeOrName, String)>,
+        return_type: TypeOrName,
     },
     /// Represents a method call being made
     ///

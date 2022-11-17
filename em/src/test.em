@@ -9,7 +9,7 @@ fn hello() -> i32 {
         let i32 b = 7;
         b
     };
-    print({
+    print_num({
         let i32 b = 2;
         b = b + a;
         b - a

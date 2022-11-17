@@ -4,7 +4,13 @@ use std::{
     fmt::Display,
 };
 
-use crate::{ast::StringContext, interface::parse_interface::Parser, token::tokenize, value::Type};
+use crate::{
+    ast::StringContext,
+    interface::parse_interface::Parser,
+    token::tokenize,
+    traits::GetRefFromMem,
+    value::{CustomTypeId, Type},
+};
 
 use em_proc::generate_translation_with_sizes;
 use pomelo::pomelo;
@@ -139,38 +145,82 @@ pub struct MethodImport {
 }
 
 /// Represents a part of the standard library to be imported
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum StdImport {
     StdOut,
+}
+
+#[derive(Debug, Clone)]
+pub struct CustomType {
+    pub name: String,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Interface {
     pub wasm_imports: HashMap<String, MethodImport>,
+    pub shared_custom_types: HashMap<CustomTypeId, CustomType>,
 }
 
 impl Interface {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn new_with_std(std_imps: Vec<StdImport>, store: &Store, env: &WasmEnv) -> Self {
+    pub fn new_with_std(std_imps: HashSet<StdImport>, store: &Store, env: &WasmEnv) -> Self {
         let mut interface = Self::default();
-        for imp in std_imps {
-            interface.insert(match imp {
-                StdImport::StdOut => MethodImport {
-                    mod_name: "env".to_string(),
-                    method_name: "print".to_string(),
+        interface.wasm_imports.reserve(std_imps.len());
+
+        /// Inserts some number of method imports into the interface
+        macro_rules! ins {
+            ($($val:expr),*) => {
+                $(interface.insert($val));*
+            };
+        }
+
+        /// Generates a new import using the following information:
+        /// * `env` -- the env name
+        /// * `name` -- the name of the method
+        /// * `translation` -- the code that would go inside of the appropriate
+        ///     `generate_translation_with_sizes!(..)` macro call
+        macro_rules! new_imp {
+            ($env:literal, $name:literal, $($translation:tt)+) => {
+                MethodImport {
+                    mod_name: $env.to_string(),
+                    method_name: $name.to_string(),
                     f: Function::new_native_with_env(
                         &store,
                         env.clone(),
-                        generate_translation_with_sizes!(
-                            fn print_c(i32); (1)
-                        ),
+                        generate_translation_with_sizes!($($translation)*),
                     ),
-                },
-            });
+                }
+            };
         }
 
-        i
+        //Loop through all the imports and add their corresponding implemenations
+        for imp in std_imps {
+            match imp {
+                //StdOut, such as `print` and `print_num`
+                StdImport::StdOut => {
+                    fn c_print_num(n: i32) {
+                        print!("{n}")
+                    }
+                    fn c_print(s: &str) {
+                        print!("{s}")
+                    }
+                    fn c_println(s: &str) {
+                        println!("{s}")
+                    }
+                    ins!(
+                        new_imp!(
+                            "env", "print_num", fn c_print_num(i32); (1)
+                        ),
+                        new_imp!("env", "print", fn c_print(&str); (1)),
+                        new_imp!("env", "println", fn c_println(&str); (1))
+                    );
+                }
+            };
+        }
+
+        interface
     }
     pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
         self.wasm_imports.insert(imp.method_name.clone(), imp)

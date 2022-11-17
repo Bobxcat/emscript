@@ -8,7 +8,7 @@ use runtime::RuntimeCfg;
 use wasmer::{Function, Instance, NativeFunc, Store};
 
 use crate::{
-    interface::{compile_api, MethodImport, WasmEnv},
+    interface::{compile_api, MethodImport, StdImport, WasmEnv},
     runtime::Runtime,
     token::tokenize,
 };
@@ -108,10 +108,11 @@ fn compile_text(
 
 //Custom types
 //1- When parsing `.api`, collect a HashMap of custom types. These are marked as external
-//2- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
+//2- 
+//3- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
 //                                                                      ^^This caveat is also true for methods
 //      - Note that the custom types introduced in AST are not marked as external
-//3- When generating CAST: for now, replace custom type declarations with struct defs in C in-order.
+//4- When generating CAST: for now, replace custom type declarations with struct defs in C in-order.
 //      - Note that typedefs in C are ordered
 
 fn main() -> anyhow::Result<()> {
@@ -121,22 +122,8 @@ fn main() -> anyhow::Result<()> {
     let env = WasmEnv::default();
 
     let interface = {
-        fn print_c(s: i32) {
-            print!("{s}")
-        }
-        let mut interface = Interface::default();
-        interface.insert(MethodImport {
-            mod_name: "env".to_string(),
-            method_name: "print".to_string(),
-            f: Function::new_native_with_env(
-                &store,
-                env.clone(),
-                generate_translation_with_sizes!(
-                    fn print_c(i32); (1)
-                ),
-            ),
-        });
-        interface
+        use StdImport::*;
+        Interface::new_with_std(vec![StdOut].into_iter().collect(), &store, &env)
     };
 
     let interface = {
@@ -161,7 +148,8 @@ fn main() -> anyhow::Result<()> {
         store,
     )?;
 
-    //Now, call runtime methods
+    //Now, call runtime methods.
+    //For methods like frame update calls, the `NativeFunc<..>` can be cached
     {
         let f_hello: NativeFunc<(), i32> = runtime.exports.get_native_function("hello")?;
         let f_hello_ret = f_hello.call()?;

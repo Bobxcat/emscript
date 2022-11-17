@@ -21,7 +21,7 @@ pomelo! {
         use ast::{ ASTNode, ASTNodeType::*, StringContext };
         use prim_tree::PrimNode;
         use tree::Tree;
-        use value::{Type, Value};
+        use value::{Type, Value, TypeOrName};
         use super::{list_to_last_value_return, new_node};
     }
 
@@ -59,6 +59,7 @@ pomelo! {
     //Binary Operators
 
     //Assign is `right` so that `a = b = 1` is possible
+    //^^Not actually a language feature at the moment, though
     %nonassoc Semicolon;
     %right Assign;
     %left Lt Gt Le Ge Eq Ne;
@@ -86,19 +87,19 @@ pomelo! {
     //Declaration (body is *not* just any expression)
     expr ::= Fn(ctx) MethodCallStart((_ctx, s)) RParen LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: TypeOrName::T(Type::Void), inputs: vec![] }, ctx, vec![body])
     }
     expr ::= Fn(ctx) MethodCallStart((_, s)) RParen Arrow Ident((_, ret)) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: vec![] }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: TypeOrName::from_str(&ret), inputs: vec![] }, ctx, vec![body])
     }
     expr ::= Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types.into_iter().map(|(t, name)| (Type::try_from_str(&t).unwrap(), name)).collect() }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: TypeOrName::T(Type::Void), inputs: input_types.into_iter().map(|(t, name)| (TypeOrName::from_str(&t), name)).collect() }, ctx, vec![body])
     }
     expr ::= Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow Ident((_, ret)) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
-        new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: input_types.into_iter().map(|(t, s)| (Type::try_from_str(&t).unwrap(), s)).collect() }, ctx, vec![body])
+        new_node(MethodDef { name: s, return_type: TypeOrName::from_str(&ret), inputs: input_types.into_iter().map(|(t, s)| (TypeOrName::from_str(&t), s)).collect() }, ctx, vec![body])
     }
 
     //Calling
@@ -125,7 +126,7 @@ pomelo! {
     //Identifiers
     expr ::= Ident((ctx, s)) { new_node(VariableRef { name: s }, ctx, vec![]) };
     expr ::= Let Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: None }, ctx, vec![rhs]) };
-    expr ::= Let Ident((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(Type::try_from_str(&t)?) }, ctx, vec![rhs]) };
+    expr ::= Let Ident((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(TypeOrName::from_str::from_str(&t)) }, ctx, vec![rhs]) };
     expr ::= LParen expr(A) RParen { A }
     expr ::= expr(A) Semicolon(ctx) { new_node(ValueConsume, ctx, vec![A]) };
 
