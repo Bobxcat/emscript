@@ -19,6 +19,13 @@ use wasmer::{Function, LazyInit, Memory, Store, WasmerEnv};
 
 use self::parse_interface::Token;
 
+lazy_static! {
+    static ref PARSE_DATA: ParseData = {
+        let p = ParseData::default();
+        p
+    };
+}
+
 //1) parse and find all method declarations (along with info)
 //2) runtime fills out callbacks for exports before compiling
 //3) after compilation, runtime finds
@@ -131,12 +138,12 @@ pomelo! {
     //Every token needs to know its context
     %extra_token StringContext;
 
-    %type input ParseData;
+    // %type input ParseData;
 
     %type Ident String;
     %type MethodCallStart String;
-    %type method_seq ParseData;
-    %type method_dec InterfaceMethodDec;
+    // %type method_seq ;
+    // %type method_dec InterfaceMethodDec;
     %type var_dec_list Vec<(String, String)>;
     %type expr PrimNode<ASTNode>;
 
@@ -146,8 +153,11 @@ pomelo! {
     };
 
     //A *sequence* of expresssions is multiple expressions that happen to be next to eachother (such as the body of a method)
-    method_seq ::= method_dec(dec) { let mut parse_dat = ParseData::default(); parse_dat.v.push(A); parse_dat }
-    method_seq ::= method_seq(mut m_seq) method_dec(dec) { m_seq.v.push(dec); m_seq }
+    // method_seq ::= method_dec(dec) { let mut parse_dat = ParseData::default(); parse_dat.v.push(A); parse_dat }
+    // method_seq ::= method_seq(mut m_seq) method_dec(dec) { m_seq.v.push(dec); m_seq }
+    method_seq ::= method_dec {}
+    method_seq ::= method_seq method_dec {}
+
 
     //A list of variable declarations is a comma-seperated list of pairs of `[type_name], [variable_name]` (such as: `bool a, bool b, i32 c`)
     var_dec_list ::= Ident((_, t_name)) Ident((_, name)) { vec![(t_name, name)] }
@@ -156,19 +166,21 @@ pomelo! {
     //Declaration (NO BODY -- implementation not provided in `.api` file)
     //Also MUST be prefixed by either `export` or `import`
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_ctx, s)) RParen Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, vec![], Type::Void, &t ).unwrap()
+        // InterfaceMethodDec::try_new(ctx, s, vec![], Type::Void, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![])
+        InterfaceMethodDec::try_new(ctx, s, vec![], Type::Void, &t ).unwrap()
+
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) RParen Arrow Ident((_, ret)) Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, vec![], TypeOrName::from_str(&ret)?, &t ).unwrap()
+        // InterfaceMethodDec::try_new(ctx, s, vec![], TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: vec![] }, ctx, vec![])
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::T(Void), &t ).unwrap()
+        // InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::T(Void), &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types.into_iter().map(|(t, name)| (Type::try_from_str(&t).unwrap(), name)).collect() }, ctx, vec![])
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow Ident((_, ret)) Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::from_str(&ret)?, &t ).unwrap()
+        // InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: input_types.into_iter().map(|(t, s)| (Type::try_from_str(&t).unwrap(), s)).collect() }, ctx, vec![])
     }
 }
@@ -367,5 +379,8 @@ pub fn compile_api(raw: &str, interface: Interface) -> anyhow::Result<Interface>
                 .join("\n")
         )
     })?;
+
+    //Reset the ParseData in case of a future parsing
+    PARSE_DATA = ParseData::default();
     Ok(interface)
 }

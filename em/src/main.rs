@@ -21,7 +21,6 @@ extern crate wasmer;
 extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
-// extern crate multimap;
 extern crate bimap;
 extern crate wasmer_engine_universal;
 
