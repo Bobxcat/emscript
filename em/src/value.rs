@@ -25,7 +25,7 @@ pub struct CustomType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CustomTypeId(usize);
+pub struct CustomTypeId(pub usize);
 
 impl Display for CustomTypeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

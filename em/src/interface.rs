@@ -9,7 +9,7 @@ use crate::{
     interface::parse_interface::Parser,
     token::tokenize,
     traits::GetRefFromMem,
-    value::{CustomTypeId, Type},
+    value::{CustomTypeId, Type, TypeOrName},
 };
 
 use em_proc::generate_translation_with_sizes;
@@ -35,15 +35,22 @@ impl InterfaceMethodDec {
         ctx: StringContext,
         name: String,
         params: Vec<(String, String)>,
-        ret: Type,
+        ret: TypeOrName,
         t: &str,
+        custom_types: HashMap<String, CustomType>,
     ) -> Option<Self> {
         Some(Self {
             ctx,
             name,
             params: params
                 .into_iter()
-                .map(|(t, name)| Ok((Type::try_from_str(&t)?, name)))
+                //Map each type name into an actual type
+                //Keep in mind that only interface-defined types are valid here
+                .map(|(t, name)| {
+                    let t = TypeOrName::from_str(&t);
+                    // Ok((t, name))
+                    todo!()
+                })
                 .collect::<Result<Vec<_>, ()>>()
                 .ok()?,
             ret,
@@ -76,7 +83,7 @@ pomelo! {
         use ast::{ ASTNode, StringContext };
         use prim_tree::PrimNode;
         use tree::Tree;
-        use value::{Type};
+        use value::{Type, TypeOrName};
         use super::InterfaceMethodDec;
         use super::InterfaceMethodType::*;
     }
@@ -114,15 +121,15 @@ pomelo! {
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![])
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) RParen Arrow Ident((_, ret)) Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, vec![], Type::try_from_str(&ret)?, &t ).unwrap()
+        InterfaceMethodDec::try_new(ctx, s, vec![], TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: vec![] }, ctx, vec![])
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, input_types, Type::Void, &t ).unwrap()
+        InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::T(Void), &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types.into_iter().map(|(t, name)| (Type::try_from_str(&t).unwrap(), name)).collect() }, ctx, vec![])
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow Ident((_, ret)) Semicolon {
-        InterfaceMethodDec::try_new(ctx, s, input_types, Type::try_from_str(&ret)?, &t ).unwrap()
+        InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: input_types.into_iter().map(|(t, s)| (Type::try_from_str(&t).unwrap(), s)).collect() }, ctx, vec![])
     }
 }

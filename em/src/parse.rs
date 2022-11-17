@@ -126,7 +126,7 @@ pomelo! {
     //Identifiers
     expr ::= Ident((ctx, s)) { new_node(VariableRef { name: s }, ctx, vec![]) };
     expr ::= Let Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: None }, ctx, vec![rhs]) };
-    expr ::= Let Ident((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(TypeOrName::from_str::from_str(&t)) }, ctx, vec![rhs]) };
+    expr ::= Let Ident((type_ctx, t)) Ident((ctx, s)) Assign expr(rhs) { new_node(VariableDef { name: s, t: Some(TypeOrName::from_str(&t)) }, ctx, vec![rhs]) };
     expr ::= LParen expr(A) RParen { A }
     expr ::= expr(A) Semicolon(ctx) { new_node(ValueConsume, ctx, vec![A]) };
 

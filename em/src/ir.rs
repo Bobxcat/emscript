@@ -117,7 +117,7 @@ impl IdentInfo {
             IdentInfo::Var { t, .. }
             | IdentInfo::Method { return_type: t, .. }
             | IdentInfo::ExternMethod { return_type: t, .. } => t.clone(),
-            IdentInfo::CustomType { id, .. } => Type::Custom(CustomTypeId::Id(*id)),
+            IdentInfo::CustomType { id, .. } => Type::Custom(CustomTypeId(*id)),
         }
     }
     pub fn name_and_return_type(&self) -> (Type, &String) {
@@ -151,7 +151,7 @@ pub struct IRAST {
     pub idents: HashMap<IdentID, IdentInfo>,
 }
 
-/// For use in `IRAST::from_ast`.
+/// For use in `IRAST::from_ast` or when otherwise converting from a raw AST
 ///
 /// Stores a stack of lookup tables.
 /// When walking recursively through an AST, when a scope increase is encountered then `increase_scope()` is called
@@ -160,15 +160,9 @@ pub struct IRAST {
 /// This stack represents a way of seeing what identifiers are visible at a given point as well as
 /// the global collection of all identifiers
 #[derive(Debug, Clone)]
-struct IdentScopeStack {
+pub(crate) struct IdentScopeStack {
     /// Represents all identifiers which have *ever* been encountered by the stack
     global_idents: HashMap<IdentID, IdentInfo>,
-    // /// Represents all custom types which currently exist
-    // env_custom_types: HashMap<usize, CustomType>,
-    // /// Represents all custom types
-    // ///
-    // /// Custom types have two properties
-    // user_custom_types: HashMap<usize, CustomType>,
     /// Represents all identifiers which are currently visible (if this has been appropriately used walking the AST)
     ///
     /// More specifically, the name of some identifier put into this table will return the `IdentID` of the matching
