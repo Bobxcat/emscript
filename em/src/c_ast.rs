@@ -377,7 +377,6 @@ fn ir_ast_to_cast_recurse(
     return_var: Option<String>,
     used_wasm_imports: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Tree<CASTNode>> {
-    println!("a");
     // println!(
     //     "ir_ast_to_cast_recurse: {return_var:#?}\ncurr: {curr_ast:?}\n{:#?}\n",
     //     ast[curr_ast].data
@@ -390,13 +389,9 @@ fn ir_ast_to_cast_recurse(
     //         + std::mem::size_of_val(&return_var)
     //         + std::mem::size_of_val(used_wasm_imports)
     // );
-    // println!("Global -- {}", size_of_val(_))
     let children = ast[curr_ast].children.clone();
 
     let mut cast = Tree::new();
-
-    // //tmp
-    // println!("{} -> {:?}", ast[curr_ast].data, return_var);
 
     /// Shorthand for adding a node to `cast` and appending all children of `curr_ast` to it
     ///
@@ -433,7 +428,6 @@ fn ir_ast_to_cast_recurse(
     /// * `return_var`
     macro_rules! recurse_child {
         ($child_index:expr, $return_var:expr) => {{
-            println!("f\n");
             ir_ast_to_cast_recurse(ast, children[$child_index], $return_var, used_wasm_imports)?
         }};
     }
@@ -720,7 +714,7 @@ fn ir_ast_to_cast_recurse(
         | IRNode::Le
         | IRNode::Ge => {
             // println!("{}\n\n", std::backtrace::Backtrace::force_capture());
-            // std::thread::sleep(std::time::Duration::from_millis(100));
+            // std::thread::sleep(std::time::Duration::from_millis(500));
             let parent = cast.new_node(CASTNode::Ignore);
             let t = Type::Int32; //Ah, types
             let tmp_1 = generate_tmp();
