@@ -2,4 +2,5 @@
 
 //export fn foo(i32 a, i32 b) -> i32;
 
-export fn print(i32 s);
+//export fn print(i32 s);
+export fn add(i32 a, i32 b) -> i32;

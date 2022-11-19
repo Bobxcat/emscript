@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    mem::size_of,
     sync::Mutex,
     vec,
 };
@@ -204,7 +205,6 @@ fn cast_type_to_string(t: Type) -> String {
             format!("long")
         }
         Type::Int32 => format!("int"),
-        // Type::String => todo!(),
 
         //:(
         Type::Custom(_) => todo!(),
@@ -319,7 +319,7 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
 
 pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result<Tree<CASTNode>> {
     let mut ir_ast = IRAST::from_ast(ast, &interface)?;
-    ir_ast.mangle(vec!["hello"].into_iter().collect());
+    ir_ast.mangle(vec!["hello", "fibonacci"].into_iter().collect());
 
     let mut used_wasm_imports = HashSet::new();
 
@@ -333,14 +333,24 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result
     //Add all the `extern` method declarations at the begining
     let head = ast.find_head().unwrap();
 
+    //Note: this same code exists in `IRAST::from_ast`
     for (name, mangled) in used_wasm_imports {
         let imp = &interface.wasm_imports[&name];
+
+        let mut param_idx = 0;
         let method_dec = ast.new_node(CASTNode::ExternMethodDef {
             mod_name: imp.mod_name.clone(),
             imp_name: name,
             name: mangled,
-            inputs: vec![(Type::Int32, "s".into())],
-            return_type: Type::Void,
+            inputs: imp
+                .params
+                .iter()
+                .map(|t| {
+                    param_idx += 1;
+                    (*t, format!("_{param_idx}"))
+                })
+                .collect(),
+            return_type: imp.ret.clone(),
         });
         ast.prepend_to(head, method_dec)?;
     }
@@ -348,17 +358,38 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result
     Ok(ast)
 }
 
+// /// Represents a
+// pub struct UsedExport {
+//     pub name: String,
+//     pub mangled_name: String,
+//     pub params: Vec<Type>,
+//     pub ret: Type,
+// }
+
 /// * `ast` - The input AST for EmScript code
 /// * `curr_ast` - The current node to be evaluated in `ast`
 /// * `expr_tmp_vars` - The name of the variable which should be assigned to in this
 /// * `used_wasm_imports` - Denotes which `wasm_imports` have been used from the interface.
-/// The first of each tuple is the original method name, the latter is the mangled name
+///     The first of each tuple is the original method name, the latter is the mangled name
 fn ir_ast_to_cast_recurse(
     ast: &IRAST,
     curr_ast: NodeId,
     return_var: Option<String>,
     used_wasm_imports: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Tree<CASTNode>> {
+    // println!(
+    //     "ir_ast_to_cast_recurse: {return_var:#?}\ncurr: {curr_ast:?}\n{:#?}\n",
+    //     ast[curr_ast].data
+    // );
+    // std::thread::sleep(std::time::Duration::from_millis(500));
+    // println!(
+    //     "[{curr_ast:?}] -- {}",
+    //     std::mem::size_of_val(ast)
+    //         + std::mem::size_of_val(&curr_ast)
+    //         + std::mem::size_of_val(&return_var)
+    //         + std::mem::size_of_val(used_wasm_imports)
+    // );
+    // println!("Global -- {}", size_of_val(_))
     let children = ast[curr_ast].children.clone();
 
     let mut cast = Tree::new();
@@ -551,7 +582,7 @@ fn ir_ast_to_cast_recurse(
         }
         IRNode::MethodCall(id) => {
             // Gather the method's information
-            let (name, inputs, return_type) = {
+            let (name, inputs, ret) = {
                 let method_info = &ast[*id];
 
                 if let IdentInfo::Method {
@@ -620,28 +651,22 @@ fn ir_ast_to_cast_recurse(
             //Finish by adding the method call itself, which assigns to `return_val`
             //Method calls where `return_val == None` will not assign at all
             {
-                if let Some(return_var) = return_var {
-                    let semicolon = cast.new_node(CASTNode::Semicolon);
-                    let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
+                //Regarless of whether or not there's a return type, create the semicolon/method call subtree
+                let semicolon = cast.new_node(CASTNode::Semicolon);
+                let inputs = params_tmp_vars.into_iter().map(|(_, name)| name).collect();
 
-                    let inputs = params_tmp_vars.into_iter().map(|(_, name)| name).collect();
-                    let method_call = cast.new_node(CASTNode::MethodCall {
-                        name: name.clone(),
-                        inputs,
-                    });
+                let method_call = cast.new_node(CASTNode::MethodCall {
+                    name: name.clone(),
+                    inputs,
+                });
+
+                if let Some(return_var) = return_var {
+                    let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
 
                     cast.append_to(assign, method_call)?;
                     cast.append_to(semicolon, assign)?;
                     cast.append_to(parent, semicolon)?;
                 } else {
-                    let semicolon = cast.new_node(CASTNode::Semicolon);
-
-                    let inputs = params_tmp_vars.into_iter().map(|(_, name)| name).collect();
-                    let method_call = cast.new_node(CASTNode::MethodCall {
-                        name: name.clone(),
-                        inputs,
-                    });
-
                     cast.append_to(semicolon, method_call)?;
                     cast.append_to(parent, semicolon)?;
                 }
@@ -700,7 +725,7 @@ fn ir_ast_to_cast_recurse(
         | IRNode::Le
         | IRNode::Ge => {
             let parent = cast.new_node(CASTNode::Ignore);
-            let t = Type::Int32;
+            let t = Type::Int32; //Ah, types
             let tmp_1 = generate_tmp();
             let tmp_2 = generate_tmp();
 
@@ -718,7 +743,7 @@ fn ir_ast_to_cast_recurse(
             {
                 let brackets = cast.new_node(CASTNode::Brackets);
                 cast.append_to(parent, brackets)?;
-
+                println!("lhs: {:?}", ast[children[0]].data);
                 let lhs = &mut recurse_child!(0, Some(tmp_1.clone()));
                 cast.append_tree(brackets, lhs)?;
             }
@@ -726,7 +751,7 @@ fn ir_ast_to_cast_recurse(
             {
                 let brackets = cast.new_node(CASTNode::Brackets);
                 cast.append_to(parent, brackets)?;
-
+                println!("rhs: {:?}", ast[children[1]].data);
                 let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
                 cast.append_tree(brackets, rhs)?;
             }
@@ -761,11 +786,10 @@ fn ir_ast_to_cast_recurse(
                 cast.append_to(op, tmp_2)?;
             }
 
-            // {t} {tmp_1}, {tmp_2};
-            // { {compile(lhs, tmp_1)} }
-            // { {compile(rhs, tmp_2)} }
-            // return_var = {tmp_1} + {tmp_2};
-            // todo!()
+            // [t] [tmp_1], [tmp_2];
+            // { [compile(lhs, tmp_1)] }
+            // { [compile(rhs, tmp_2)] }
+            // return_var = [tmp_1] + [tmp_2];
         }
 
         //LastValueReturn:

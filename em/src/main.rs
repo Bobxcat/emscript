@@ -11,6 +11,7 @@ use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
     runtime::Runtime,
     token::tokenize,
+    value::{custom_types::str_to_type, Type},
 };
 
 #[macro_use]
@@ -107,12 +108,24 @@ fn compile_text(
 
 //Custom types
 //1- When parsing `.api`, collect a HashMap of custom types. These are marked as external
-//2- 
+//2-
 //3- When generating IRAST, include custom types in `IdentStack` -- this requires type declarations be ordered, fine for now
 //                                                                      ^^This caveat is also true for methods
 //      - Note that the custom types introduced in AST are not marked as external
 //4- When generating CAST: for now, replace custom type declarations with struct defs in C in-order.
 //      - Note that typedefs in C are ordered
+
+// fn main() {
+//     use std::thread::*;
+//     // Builder::new()
+//     //     .stack_size(4 * 1024 * 1024)
+//     //     .spawn(main_2)
+//     //     .unwrap()
+//     //     .join()
+//     //     .unwrap()
+//     //     .unwrap();
+//     std::thread::spawn(main_2).join().unwrap().unwrap();
+// }
 
 fn main() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
@@ -122,18 +135,37 @@ fn main() -> anyhow::Result<()> {
 
     let interface = {
         use StdImport::*;
-        Interface::new_with_std(vec![StdOut].into_iter().collect(), &store, &env)
+        let mut i = Interface::new_with_std(vec![StdOut].into_iter().collect(), &store, &env);
+        //`add`
+        {
+            fn add(a: i32, b: i32) -> i32 {
+                a + b
+            }
+            i.insert(MethodImport {
+                mod_name: "env".into(),
+                method_name: "add".into(),
+                params: vec![Type::Int32, str_to_type("i32").unwrap()],
+                ret: Type::Int32,
+                f: Function::new_native_with_env(
+                    &store,
+                    env,
+                    generate_translation_with_sizes!(fn add(i32, i32) -> i32; (1, 1) -> 1),
+                ),
+            });
+        }
+
+        i
     };
 
     let interface = {
         //Uses the workspace's `Cargo.toml`
-        let mut f = File::open(r"./em/src/test.api")?;
+        let mut f = File::open(r"./src/test.api")?;
         let mut s = String::new();
         f.read_to_string(&mut s)?;
         compile_api(&s, interface)?
     };
 
-    println!("Compiled interface:\n{:#?}", interface);
+    // println!("Compiled interface:\n{:#?}", interface);
 
     let raw = include_str!("test.em");
     let runtime = compile_text(
@@ -154,6 +186,12 @@ fn main() -> anyhow::Result<()> {
         let f_hello_ret = f_hello.call()?;
 
         println!("\nReturned from `hello(..)` call: {f_hello_ret}");
+    }
+    {
+        let f_fib: NativeFunc<i32, i32> = runtime.exports.get_native_function("fibonacci")?;
+        let f_fib = f_fib.call(500)?;
+
+        println!("\nReturned from `fibonacci(..)` call: {f_fib}");
     }
 
     Ok(())

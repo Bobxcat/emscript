@@ -193,7 +193,6 @@ pub fn parse(tokens: Vec<Token>) -> Result<Tree<ASTNode>, ()> {
     }
 
     let mut ast = p.end_of_input()?;
-
     //Set the scope depth for the ast
     {
         let head = ast.find_head().unwrap();

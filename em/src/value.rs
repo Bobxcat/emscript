@@ -1,10 +1,60 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
 };
 
-use crate::{ast::ASTNodeType, c_ast::CASTNode, tree::Tree};
+use crate::ast::ASTNodeType;
+
+pub mod custom_types {
+    use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    use crate::{utils::MultiMap, value::CustomTypeId};
+
+    use super::{CustomType, Type, TypeOrName};
+
+    lazy_static! {
+        pub static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
+            RwLock::new(MultiMap::default());
+    }
+
+    pub fn custom_types() -> RwLockReadGuard<'static, MultiMap<CustomTypeId, String, CustomType>> {
+        CUSTOM_TYPES.read().expect("Failed to lock `CUSTOM_TYPES`")
+    }
+
+    pub fn custom_types_mut(
+    ) -> RwLockWriteGuard<'static, MultiMap<CustomTypeId, String, CustomType>> {
+        CUSTOM_TYPES
+            .write()
+            .expect("Failed to mutably lock `CUSTOM_TYPES`")
+    }
+
+    pub fn str_to_type(s: &str) -> Option<Type> {
+        let t = TypeOrName::from_str(s);
+        let custom_types = custom_types();
+        match t {
+            TypeOrName::T(t) => Some(t),
+            TypeOrName::Name(s) => custom_types.get_k_from_v(&s).map(|id| Type::Custom(*id)),
+        }
+    }
+
+    pub fn insert_custom_type(t: CustomType) -> Option<CustomType> {
+        let name = t.name.clone();
+        let id = gen_unique_custom_type_id();
+
+        let mut custom_types = custom_types_mut();
+        custom_types.insert(id, name, t)
+    }
+
+    fn gen_unique_custom_type_id() -> CustomTypeId {
+        let custom_types = custom_types();
+        let mut n = CustomTypeId(2 * custom_types.len());
+        while custom_types.contains_k(&n) {
+            n.0 += 1;
+        }
+
+        n
+    }
+}
 
 /// Represents a type, custom or builtin
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +72,15 @@ pub enum Type {
 #[derive(Debug, Clone)]
 pub struct CustomType {
     pub name: String,
+    pub implementation: CustomTypeImpl,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum CustomTypeImpl {
+    /// A custom type implemented by the EmScript code and contained within it
+    Em,
+    /// A type shared between the EmScript and environment, functionality exported by environment
+    Shared,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,6 +93,8 @@ impl Display for CustomTypeId {
 }
 
 /// Represents either a type or the name of a type which has yet to be given a name
+///
+/// For use in AST, before all custom types (especially EmScript defined ones) have been inserted into `CUSTOM_TYPES`
 #[derive(Debug, Clone)]
 pub enum TypeOrName {
     T(Type),
@@ -59,6 +120,7 @@ impl TypeOrName {
         Self::T(match s {
             "bool" => Bool,
             "i32" => Int32,
+            "()" => Void,
             _ => return Self::Name(s.to_string()),
         })
     }
@@ -129,7 +191,7 @@ impl Display for Type {
             f,
             "{}",
             match self {
-                Type::Void => "void".into(),
+                Type::Void => "()".into(),
                 Type::Bool => "bool".into(),
                 Type::Int => "{integer}".into(),
                 Type::Int32 => "i32".into(),

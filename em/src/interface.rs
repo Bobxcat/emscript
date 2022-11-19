@@ -1,28 +1,30 @@
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
     fmt::Display,
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::{
     ast::StringContext,
-    interface::parse_interface::Parser,
+    interface::parse_interface::Token,
     token::tokenize,
     traits::GetRefFromMem,
     utils::MultiMap,
-    value::{CustomTypeId, Type, TypeOrName},
+    value::{custom_types::str_to_type, CustomTypeId, Type, TypeOrName},
 };
 
 use em_proc::generate_translation_with_sizes;
 use pomelo::pomelo;
 use wasmer::{Function, LazyInit, Memory, Store, WasmerEnv};
 
-use self::parse_interface::Token;
+use self::parse_interface::Parser;
 
 lazy_static! {
-    static ref PARSE_DATA: ParseData = {
+    static ref PARSE_DATA: Mutex<ParseData> = {
         let p = ParseData::default();
-        p
+        Mutex::new(p)
     };
 }
 
@@ -33,33 +35,41 @@ lazy_static! {
 /// Data passed along while parsing
 #[derive(Debug, Default, Clone)]
 struct ParseData {
-    v: Vec<InterfaceMethodDec>,
-    custom_types: MultiMap<CustomTypeId, String, CustomType>,
+    method_decs: HashMap<String, InterfaceMethodDec>,
 }
 
 impl ParseData {
-    fn insert_custom_type(&mut self, t: CustomType) -> Option<CustomType> {
-        let name = t.name.clone();
-        let id = self.gen_unique_custom_type_id();
-        self.custom_types.insert(id, name, t)
-    }
-    fn str_to_type(&self, s: &str) -> Option<Type> {
-        let t = TypeOrName::from_str(s);
-        match t {
-            TypeOrName::T(t) => Some(t),
-            TypeOrName::Name(s) => self
-                .custom_types
-                .get_k_from_v(&s)
-                .map(|id| Type::Custom(*id)),
-        }
-    }
-    fn gen_unique_custom_type_id(&self) -> CustomTypeId {
-        let mut n = CustomTypeId(2 * self.custom_types.len());
-        while self.custom_types.contains_k(&n) {
-            n.0 += 1;
-        }
-
-        n
+    fn insert_method(
+        &mut self,
+        ctx: StringContext,
+        name: &str,
+        params: Vec<(String, String)>,
+        ret: &str,
+    ) -> Option<InterfaceMethodDec> {
+        //Map params
+        let params = params
+            .into_iter()
+            //Map each type name into an actual type
+            //Keep in mind that only interface-defined types are valid here
+            .map(|(t, name)| {
+                let t = str_to_type(&t);
+                match t {
+                    Some(t) => Some((t, name)),
+                    None => None,
+                }
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let ret = str_to_type(&ret)?;
+        self.method_decs.insert(
+            name.to_string(),
+            InterfaceMethodDec {
+                ctx,
+                name: name.to_string(),
+                params,
+                ret,
+                t: InterfaceMethodType::Export,
+            },
+        )
     }
 }
 
@@ -76,25 +86,14 @@ impl InterfaceMethodDec {
     fn try_new(
         ctx: StringContext,
         name: String,
-        params: Vec<(String, String)>,
+        params: Vec<(Type, String)>,
         ret: Type,
         t: &str,
-        custom_types: &HashMap<String, CustomType>,
     ) -> Option<Self> {
         Some(Self {
             ctx,
             name,
-            params: params
-                .into_iter()
-                //Map each type name into an actual type
-                //Keep in mind that only interface-defined types are valid here
-                .map(|(t, name)| {
-                    let t = TypeOrName::from_str(&t);
-                    // Ok((t, name))
-                    todo!()
-                })
-                .collect::<Result<Vec<_>, ()>>()
-                .ok()?,
+            params,
             ret,
             t: InterfaceMethodType::try_from_str(t)?,
         })
@@ -133,6 +132,7 @@ pomelo! {
         use value::{Type, TypeOrName};
         use super::InterfaceMethodDec;
         use super::InterfaceMethodType::*;
+        use super::*;
     }
     %module parse_interface;
     //Every token needs to know its context
@@ -168,21 +168,31 @@ pomelo! {
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_ctx, s)) RParen Semicolon {
         // InterfaceMethodDec::try_new(ctx, s, vec![], Type::Void, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: vec![] }, ctx, vec![])
-        InterfaceMethodDec::try_new(ctx, s, vec![], Type::Void, &t ).unwrap()
-
+        //
+        // PARSE_DATA.lock()?.
+        lock_parse_data().unwrap().insert_method(ctx, &s, vec![], "()");
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) RParen Arrow Ident((_, ret)) Semicolon {
         // InterfaceMethodDec::try_new(ctx, s, vec![], TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: vec![] }, ctx, vec![])
+        lock_parse_data().unwrap().insert_method(ctx, &s, vec![], &ret);
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_ctx, s)) var_dec_list(input_types) RParen Semicolon {
         // InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::T(Void), &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::Void, inputs: input_types.into_iter().map(|(t, name)| (Type::try_from_str(&t).unwrap(), name)).collect() }, ctx, vec![])
+        lock_parse_data().unwrap().insert_method(ctx, &s, input_types, "()");
     }
     method_dec ::= Ident((ictx, t)) Fn(ctx) MethodCallStart((_, s)) var_dec_list(input_types) RParen Arrow Ident((_, ret)) Semicolon {
         // InterfaceMethodDec::try_new(ctx, s, input_types, TypeOrName::from_str(&ret)?, &t ).unwrap()
         // new_node(MethodDef { name: s, return_type: Type::try_from_str(&ret)?, inputs: input_types.into_iter().map(|(t, s)| (Type::try_from_str(&t).unwrap(), s)).collect() }, ctx, vec![])
+        lock_parse_data().unwrap().insert_method(ctx, &s, input_types, &ret);
     }
+}
+
+fn lock_parse_data() -> anyhow::Result<MutexGuard<'static, ParseData>> {
+    PARSE_DATA
+        .lock()
+        .map_err(|err| anyhow::format_err!("failed to lock `PARSE_DATA`: {:#?}", err))
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -199,6 +209,8 @@ pub struct WasmEnv {
 pub struct MethodImport {
     pub mod_name: String,
     pub method_name: String,
+    pub params: Vec<Type>,
+    pub ret: Type,
     pub f: Function,
 }
 
@@ -208,18 +220,13 @@ pub enum StdImport {
     StdOut,
 }
 
-#[derive(Debug, Clone)]
-pub struct CustomType {
-    pub name: String,
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct Interface {
     pub wasm_imports: HashMap<String, MethodImport>,
-    pub shared_custom_types: HashMap<CustomTypeId, CustomType>,
 }
 
 impl Interface {
+    #[allow(unused)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -240,10 +247,12 @@ impl Interface {
         /// * `translation` -- the code that would go inside of the appropriate
         ///     `generate_translation_with_sizes!(..)` macro call
         macro_rules! new_imp {
-            ($env:literal, $name:literal, $($translation:tt)+) => {
+            ($env:literal, $name:literal, $params:expr, $ret:expr, $($translation:tt)+) => {
                 MethodImport {
                     mod_name: $env.to_string(),
                     method_name: $name.to_string(),
+                    params: $params,
+                    ret: $ret,
                     f: Function::new_native_with_env(
                         &store,
                         env.clone(),
@@ -269,10 +278,10 @@ impl Interface {
                     }
                     ins!(
                         new_imp!(
-                            "env", "print_num", fn c_print_num(i32); (1)
+                            "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
                         ),
-                        new_imp!("env", "print", fn c_print(&str); (1)),
-                        new_imp!("env", "println", fn c_println(&str); (1))
+                        new_imp!("env", "print", vec![Type::Int32], Type::Void, fn c_print(&str); (1)),
+                        new_imp!("env", "println", vec![Type::Int32], Type::Void, fn c_println(&str); (1))
                     );
                 }
             };
@@ -283,13 +292,11 @@ impl Interface {
     pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
         self.wasm_imports.insert(imp.method_name.clone(), imp)
     }
-    // fn get_import_by_name(&self, n: &str) -> Option<&MethodImport> {
-    //     self.wasm_imports.get(n)
-    // }
+
     /// Verifies that `self` covers exactly `interface_decs`
     ///
     /// WARNING: Currently does no type checking (i.e. arguments/return types could be mismatched)
-    fn verify(&self, interface_decs: &Vec<InterfaceMethodDec>) -> Result<(), Vec<ApiErr>> {
+    fn verify(&self, interface_decs: &Vec<&InterfaceMethodDec>) -> Result<(), Vec<ApiErr>> {
         let mut wasm_imports_used = HashSet::new();
         let mut errs = Vec::new();
         for dec in interface_decs {
@@ -309,6 +316,7 @@ impl Interface {
         } else {
             Ok(())
         }
+        // todo!("Interface::verify -- type checking")
     }
 }
 
@@ -366,21 +374,27 @@ pub fn compile_api(raw: &str, interface: Interface) -> anyhow::Result<Interface>
     }
 
     //Collect the final AST
-    let interface_decs = p
+    let _interface_decs = p
         .end_of_input()
         .map_err(|_| anyhow::format_err!("Parse EOI error"))?;
 
-    interface.verify(&interface_decs).map_err(|err| {
-        anyhow::format_err!(
-            "Multiple errors encountered compiling API:\n{}",
-            err.iter()
-                .map(|e| format!("{e}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
+    //Lock the parse data *after* finishing the parse
+    let mut parse_data_lock = lock_parse_data()?;
 
-    //Reset the ParseData in case of a future parsing
-    PARSE_DATA = ParseData::default();
+    interface
+        .verify(&parse_data_lock.method_decs.values().collect())
+        .map_err(|err| {
+            anyhow::format_err!(
+                "Multiple errors encountered compiling API:\n{}",
+                err.iter()
+                    .map(|e| format!("{e}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        })?;
+
+    //Reset the ParseData in case of a future parse
+    *parse_data_lock = ParseData::default();
+
     Ok(interface)
 }

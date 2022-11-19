@@ -3,9 +3,9 @@ use std::{
     ops::{Add, Div, Mul, Range, Sub},
 };
 
-use crate::value::{Type, Value};
+use crate::value::{Type, TypeOrName, Value};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ASTNode {
     pub t: ASTNodeType,
     pub context: StringContext,
@@ -73,7 +73,7 @@ impl Display for ASTNode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum ASTNodeType {
     /// A primitive literal
     ///
