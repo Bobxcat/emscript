@@ -65,7 +65,7 @@ fn compile_text(
     }
     let mut ast = ast.unwrap();
 
-    println!("==AST==\n{}=======\n", ast);
+    // println!("==AST==\n{}=======\n", ast);
 
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
@@ -117,14 +117,14 @@ fn compile_text(
 
 // fn main() {
 //     use std::thread::*;
-//     // Builder::new()
-//     //     .stack_size(4 * 1024 * 1024)
-//     //     .spawn(main_2)
-//     //     .unwrap()
-//     //     .join()
-//     //     .unwrap()
-//     //     .unwrap();
-//     std::thread::spawn(main_2).join().unwrap().unwrap();
+//     Builder::new()
+//         .stack_size(4 * 1024 * 1024)
+//         .spawn(main_2)
+//         .unwrap()
+//         .join()
+//         .unwrap()
+//         .unwrap();
+//     // std::thread::spawn(main_2).join().unwrap().unwrap();
 // }
 
 fn main() -> anyhow::Result<()> {

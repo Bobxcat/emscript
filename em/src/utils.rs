@@ -10,7 +10,7 @@ use bimap::BiMap;
 
 //Note about prefixes:
 //- Should have a max length of `10`, so that the formatted variable ID (which has a max length of `22`)
-//      still fits within the first `32` characters of the var name, which is when C stops differentiating the var name
+//      still fits within the first `32` characters of the var name, which is when C stops differentiating the var names
 
 pub const PREFIX_TMP: &str = "_tmp";
 //Prefix identifiers should have the most underscores, since user-provided idents can start with underscores

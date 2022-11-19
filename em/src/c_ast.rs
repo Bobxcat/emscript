@@ -21,7 +21,7 @@ lazy_static! {
 /// Generates a globally unique tmp variable name
 fn generate_tmp() -> String {
     let mut count = C_TMP_VAR_COUNT.lock().unwrap();
-    //Prefix is five underscores
+    //Prefix is the compile time constant `utils::PREFIX_TMP`
     let s = format!("{PREFIX_TMP}{}", format_compact(*count));
     *count += 1;
     s
@@ -377,6 +377,7 @@ fn ir_ast_to_cast_recurse(
     return_var: Option<String>,
     used_wasm_imports: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Tree<CASTNode>> {
+    println!("a");
     // println!(
     //     "ir_ast_to_cast_recurse: {return_var:#?}\ncurr: {curr_ast:?}\n{:#?}\n",
     //     ast[curr_ast].data
@@ -431,9 +432,10 @@ fn ir_ast_to_cast_recurse(
     /// * `child_index`
     /// * `return_var`
     macro_rules! recurse_child {
-        ($child_index:expr, $return_var:expr) => {
+        ($child_index:expr, $return_var:expr) => {{
+            println!("f\n");
             ir_ast_to_cast_recurse(ast, children[$child_index], $return_var, used_wasm_imports)?
-        };
+        }};
     }
 
     match &ast[curr_ast].data {
@@ -514,13 +516,6 @@ fn ir_ast_to_cast_recurse(
                     "An assignment [Assign] occured with `return_var = {return_var:?}`, when assignment returns void"
                 ));
             }
-            // if let Some(_return_var) = return_var.clone() {
-            //     single_parent!(CASTNode::Assign(name.clone()))
-            // } else {
-            //     return Err(anyhow::format_err!(
-            //         "An assignment occured with `return_var = None`"
-            //     ));
-            // }
         }
         IRNode::MethodDef(id) => {
             // Gather the method's information
@@ -724,6 +719,8 @@ fn ir_ast_to_cast_recurse(
         | IRNode::Gt
         | IRNode::Le
         | IRNode::Ge => {
+            // println!("{}\n\n", std::backtrace::Backtrace::force_capture());
+            // std::thread::sleep(std::time::Duration::from_millis(100));
             let parent = cast.new_node(CASTNode::Ignore);
             let t = Type::Int32; //Ah, types
             let tmp_1 = generate_tmp();
@@ -739,19 +736,19 @@ fn ir_ast_to_cast_recurse(
                 cast.append_to(semicolon, var_dec_list)?;
                 cast.append_to(parent, semicolon)?;
             }
+
             //Compile the `lhs`
             {
                 let brackets = cast.new_node(CASTNode::Brackets);
                 cast.append_to(parent, brackets)?;
-                println!("lhs: {:?}", ast[children[0]].data);
                 let lhs = &mut recurse_child!(0, Some(tmp_1.clone()));
                 cast.append_tree(brackets, lhs)?;
             }
+
             //Compile the `rhs`
             {
                 let brackets = cast.new_node(CASTNode::Brackets);
                 cast.append_to(parent, brackets)?;
-                println!("rhs: {:?}", ast[children[1]].data);
                 let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
                 cast.append_tree(brackets, rhs)?;
             }
@@ -762,6 +759,7 @@ fn ir_ast_to_cast_recurse(
                 cast.append_to(semicolon, assignment)?;
                 cast.append_to(parent, semicolon)?;
 
+                //The only difference between all the bin ops is the actual operator in use
                 let op = {
                     let op = match &ast[curr_ast].data {
                         IRNode::Add => CASTNode::Add,

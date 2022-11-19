@@ -268,18 +268,15 @@ impl IRAST {
 
         let tree =
             Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack, interface)?;
-        // Self::from_ast_recurse(ast, &mut None, ast.find_head().unwrap(), &mut ident_stack)?;
         Ok(Self {
             tree,
             idents: ident_stack.global_idents,
         })
     }
+    /// * `ast` - the AST of the input code
     /// * `curr` - the current node in `ast` which is being transformed
     /// * `ident_stack` - the identifier stack
-    ///
-    /// Notes:
-    /// * Every single `CustomTypeId` in `ast` __*must*__ be `Name(_)`
-    /// * In the returned AST, every `CustomTypeId` will be `Id(_)`
+    /// * `interface` - defines external methods and such
     fn from_ast_recurse(
         ast: &Tree<ASTNode>,
         curr: NodeId,
@@ -343,7 +340,7 @@ impl IRAST {
                     TypeOrName::Name(type_name) => {
                         if let Some(id) = ident_stack.get_ident_from_name(type_name) {
                             match &ident_stack.global_idents[&id] {
-                                IdentInfo::CustomType {id, ..} => todo!(),
+                                IdentInfo::CustomType {id: _, ..} => todo!(),
                                 _ => return Err(anyhow::format_err!("Identifier encountered which was expected to be a custom type but was instead `{:?}`\n{}\n",
                                 ident_stack.global_idents[&id], &ast[curr].data.context
                             ))
