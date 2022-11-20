@@ -117,17 +117,26 @@ fn compile_text(
 
 //Dirty fix to deal with stack overflow for now (without having to use `--release`)
 fn main() {
-    use std::thread::*;
-    const KB: usize = 1024;
-    const MB: usize = 1024 * KB;
-    if let Err(e) = Builder::new()
-        .stack_size(2 * MB)
-        .spawn(start)
-        .unwrap()
-        .join()
-        .unwrap()
-    {
-        println!("Error encountered:\n{}", e);
+    const SECONDARY_THREAD: bool = false;
+    macro_rules! debug_err {
+        ($res:expr) => {
+            if let Err(e) = $res {
+                println!("Error encountered:\n{}", e);
+            }
+        };
+    }
+    if SECONDARY_THREAD {
+        use std::thread::*;
+        const KB: usize = 1024;
+        const MB: usize = 1024 * KB;
+        debug_err!(Builder::new()
+            .stack_size(2 * MB)
+            .spawn(start)
+            .unwrap()
+            .join()
+            .unwrap());
+    } else {
+        debug_err!(start());
     }
 }
 
