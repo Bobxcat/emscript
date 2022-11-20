@@ -129,8 +129,9 @@ fn main() {
         use std::thread::*;
         const KB: usize = 1024;
         const MB: usize = 1024 * KB;
+        const STACK_MB: usize = 8 * 64;
         debug_err!(Builder::new()
-            .stack_size(2 * MB)
+            .stack_size(STACK_MB * MB)
             .spawn(start)
             .unwrap()
             .join()
