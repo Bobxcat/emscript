@@ -227,6 +227,8 @@ pub fn cast_to_string(cast: &Tree<CASTNode>) -> String {
     format!("{includes_string}\n{body_string}")
 }
 
+/// The recursive backend of `cast_to_string`. Some notes:
+/// - To reduce the size of the output string, spaces and newlines are used minimally
 fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
     let children = cast[curr].children.clone();
 
@@ -266,7 +268,7 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
                 .into_iter()
                 .map(|(t, name)| format!("{} {name}", cast_type_to_string(t.clone())))
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join(",");
             let return_type_string = cast_type_to_string(return_type.clone());
             let body_string = join_all_children!(""); //\n
             format!("{return_type_string} {name}({inputs_string}) {{\n{body_string}\n}}")
@@ -286,21 +288,22 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
             let return_type_string = cast_type_to_string(return_type.clone());
             format!("__attribute__((import_module(\"{mod_name}\"), import_name(\"{imp_name}\"))) extern {return_type_string} {name}({inputs_string});")
         }
-        CASTNode::MethodCall { name, inputs } => format!("{name}({})", inputs.join(", ")),
+        CASTNode::MethodCall { name, inputs } => format!("{name}({})", inputs.join(",")),
         CASTNode::If => format!("if ({}) {{{}}}", child!(0), child!(1)),
 
         //Basic bin ops
-        CASTNode::Add => format!("({} + {})", child!(0), child!(1)),
-        CASTNode::Sub => format!("({} - {})", child!(0), child!(1)),
-        CASTNode::Mul => format!("({} * {})", child!(0), child!(1)),
-        CASTNode::Div => format!("({} / {})", child!(0), child!(1)),
-        CASTNode::Eq => format!("({} == {})", child!(0), child!(1)),
-        CASTNode::Ne => format!("({} != {})", child!(0), child!(1)),
-        CASTNode::Gt => format!("({} > {})", child!(0), child!(1)),
-        CASTNode::Lt => format!("({} < {})", child!(0), child!(1)),
-        CASTNode::Ge => format!("({} >= {})", child!(0), child!(1)),
-        CASTNode::Le => format!("({} <= {})", child!(0), child!(1)),
-        //
+        CASTNode::Add => format!("({}+{})", child!(0), child!(1)),
+        CASTNode::Sub => format!("({}-{})", child!(0), child!(1)),
+        CASTNode::Mul => format!("({}*{})", child!(0), child!(1)),
+        CASTNode::Div => format!("({}/{})", child!(0), child!(1)),
+        CASTNode::Eq => format!("({}=={})", child!(0), child!(1)),
+        CASTNode::Ne => format!("({}!={})", child!(0), child!(1)),
+        CASTNode::Gt => format!("({}>{})", child!(0), child!(1)),
+        CASTNode::Lt => format!("({}<{})", child!(0), child!(1)),
+        CASTNode::Ge => format!("({}>={})", child!(0), child!(1)),
+        CASTNode::Le => format!("({}<={})", child!(0), child!(1)),
+
+        //Misc
         CASTNode::Semicolon => format!("{};", child!(0)),
         CASTNode::Brackets => format!("{{{}}}", join_all_children!("")), //\n
         CASTNode::Assign(name) => format!("{name} = {}", child!(0)),
@@ -714,6 +717,7 @@ fn ir_ast_to_cast_recurse(
         | IRNode::Le
         | IRNode::Ge => {
             // println!("{}\n\n", std::backtrace::Backtrace::force_capture());
+            // println!("{}\n\n", ast[curr_ast].depth);
             // std::thread::sleep(std::time::Duration::from_millis(500));
             let parent = cast.new_node(CASTNode::Ignore);
             let t = Type::Int32; //Ah, types

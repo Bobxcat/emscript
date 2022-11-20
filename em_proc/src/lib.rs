@@ -17,6 +17,7 @@ pub(crate) struct MethodDec {
     pub(crate) name: Ident,
     pub(crate) params: Vec<VarDec>,
     pub(crate) param_idents: Vec<VarIdent>,
+    #[allow(unused)]
     pub(crate) param_types: Vec<Type>,
     /// The sizes of each parameter
     pub(crate) param_chunks: Vec<usize>,
@@ -39,6 +40,7 @@ impl ToTokens for VarIdent {
 pub(crate) struct VarDec(VarIdent, Type);
 
 impl VarDec {
+    #[allow(unused)]
     pub fn name(&self) -> &str {
         &self.0 .0
     }
@@ -158,12 +160,12 @@ impl Parse for MethodDec {
     }
 }
 
-/// Takes in 2 or more expressions, and applies `assert_eq!()` on the first expression with every other
-macro_rules! assert_eq_multi {
-    ($a:expr, $($b:expr),*) => {
-       $(assert_eq!($a, $b));*
-    };
-}
+// /// Takes in 2 or more expressions, and applies `assert_eq!()` on the first expression with every other
+// macro_rules! assert_eq_multi {
+//     ($a:expr, $($b:expr),*) => {
+//        $(assert_eq!($a, $b));*
+//     };
+// }
 
 /// Parses a method declaration re-statement of the form
 /// `fn method_name(Type1, Type2, ..., Typen) -> TypeRet; (size_of::<Type1>(), size_of::<Type2>(), ..., size_of::<Typen>()) -> size_of::<TypeRet>();`
@@ -211,12 +213,19 @@ interface.wasm_imports.push(MethodImport {
 **/
 #[proc_macro]
 pub fn generate_translation_with_sizes(input: TokenStream) -> TokenStream {
+    if cfg!(debug_assertions) {
+        println!(
+            "===Started `generate_translation_with_sizes`===\nInput: {}",
+            input
+        )
+    }
+
     // Parse the input tokens into a syntax tree
     let MethodDec {
         name,
         params,
         param_idents,
-        param_types,
+        param_types: _,
         param_chunks,
         ret,
         ret_chunks,
@@ -285,7 +294,9 @@ pub fn generate_translation_with_sizes(input: TokenStream) -> TokenStream {
             let dec = VarDec(VarIdent("env".into()), Type::Verbatim(quote!(&WasmEnv)));
             translated_params.push(dec.clone());
 
-            println!("Created a `&WasmEnv` since one didn't already exist");
+            if cfg!(debug_assertions) {
+                println!("Created a `&WasmEnv` since one didn't already exist");
+            }
         }
     }
 
@@ -312,7 +323,9 @@ pub fn generate_translation_with_sizes(input: TokenStream) -> TokenStream {
             let lhs = &param_idents[i];
             let rhs = &dec.0;
             param_translations.push(quote!(let #lhs = #rhs;));
-            println!("Dealt with translating a `&WasmEnv`");
+            if cfg!(debug_assertions) {
+                println!("Dealt with translating a `&WasmEnv`");
+            }
             continue;
         }
 
@@ -432,7 +445,9 @@ pub fn generate_translation_with_sizes(input: TokenStream) -> TokenStream {
         }
     };
 
-    println!("generate_translation exanded:\n{}", expanded.to_string());
+    if cfg!(debug_assertions) {
+        println!("generate_translation exanded:\n{}", expanded.to_string());
+    }
 
     // Hand the output tokens back to the compiler
     TokenStream::from(expanded)

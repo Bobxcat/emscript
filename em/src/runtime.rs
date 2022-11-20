@@ -256,9 +256,10 @@ impl Runtime {
             clang.args([
                 "main.c",
                 "--target=wasm32",
-                "-nostdlib",
+                "-nostdlib", //No std lib to control environment
                 "-Wl,--no-entry",
-                "-Wl,--export-all", //As of now, all methods are exported
+                "-Wl,--export-all",     //As of now, all methods are exported
+                "-fbracket-depth=2048", //Many brackets are created in compilation, so high depth is needed
                 "-o",
                 "main.wasm",
                 opt_flag,

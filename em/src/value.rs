@@ -13,7 +13,7 @@ pub mod custom_types {
     use super::{CustomType, Type, TypeOrName};
 
     lazy_static! {
-        pub static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
+        static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
             RwLock::new(MultiMap::default());
     }
 

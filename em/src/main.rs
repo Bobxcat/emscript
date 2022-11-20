@@ -115,19 +115,23 @@ fn compile_text(
 //4- When generating CAST: for now, replace custom type declarations with struct defs in C in-order.
 //      - Note that typedefs in C are ordered
 
-// fn main() {
-//     use std::thread::*;
-//     Builder::new()
-//         .stack_size(4 * 1024 * 1024)
-//         .spawn(main_2)
-//         .unwrap()
-//         .join()
-//         .unwrap()
-//         .unwrap();
-//     // std::thread::spawn(main_2).join().unwrap().unwrap();
-// }
+//Dirty fix to deal with stack overflow for now (without having to use `--release`)
+fn main() {
+    use std::thread::*;
+    const KB: usize = 1024;
+    const MB: usize = 1024 * KB;
+    if let Err(e) = Builder::new()
+        .stack_size(2 * MB)
+        .spawn(start)
+        .unwrap()
+        .join()
+        .unwrap()
+    {
+        println!("Error encountered:\n{}", e);
+    }
+}
 
-fn main() -> anyhow::Result<()> {
+fn start() -> anyhow::Result<()> {
     use runtime::OptLevel::*;
 
     let store = Store::default();
@@ -159,7 +163,7 @@ fn main() -> anyhow::Result<()> {
 
     let interface = {
         //Uses the workspace's `Cargo.toml`
-        let mut f = File::open(r"./src/test.api")?;
+        let mut f = File::open(r"./em/src/test.api")?;
         let mut s = String::new();
         f.read_to_string(&mut s)?;
         compile_api(&s, interface)?
@@ -173,7 +177,7 @@ fn main() -> anyhow::Result<()> {
         RuntimeCfg {
             print_cast: false,
             verbose_compile: false,
-            opt_level: NoOpt,
+            opt_level: Debug,
         },
         interface,
         store,

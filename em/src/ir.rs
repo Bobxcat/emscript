@@ -134,20 +134,6 @@ impl IdentInfo {
     pub fn name_and_return_type(&self) -> (Type, &String) {
         //Why be performant?
         (self.return_type(), self.name())
-        // match self {
-        //     IdentInfo::Var { t, name, .. }
-        //     | IdentInfo::Method {
-        //         return_type: t,
-        //         name,
-        //         ..
-        //     }
-        //     | IdentInfo::ExternMethod {
-        //         name,
-        //         return_type: t,
-        //         ..
-        //     } => (t.clone(), name),
-        //     IdentInfo::CustomType { .. } => ,
-        // }
     }
 }
 
@@ -238,10 +224,12 @@ impl IdentScopeStack {
 
 impl IRAST {
     pub fn from_ast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result<Self> {
-        let custom_types = custom_types();
-
-        //First, create an empty identifier stack. Note that the
+        //First, create an empty identifier stack. Note that the scope must be increased before first use
         let mut ident_stack = IdentScopeStack::new();
+
+        //Create initial globally scoped values, namely interface methods
+        //Note that custom types are already stored in the global state `CUSTOM_TYPES` (accessible via `custom_types()`)
+
         ident_stack.increase_scope();
         //Note: this same code exists in `c_ast::ast_to_cast`
         for (name, imp) in &interface.wasm_imports {
@@ -263,8 +251,6 @@ impl IRAST {
 
             ident_stack.new_ident(info);
         }
-
-        drop(custom_types);
 
         let tree =
             Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack, interface)?;
