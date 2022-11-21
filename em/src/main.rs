@@ -125,20 +125,23 @@ fn main() {
             }
         };
     }
-    if SECONDARY_THREAD {
+    let res = if SECONDARY_THREAD {
         use std::thread::*;
         const KB: usize = 1024;
         const MB: usize = 1024 * KB;
-        const STACK_MB: usize = 8 * 64;
-        debug_err!(Builder::new()
+        const STACK_MB: usize = 4;
+
+        Builder::new()
             .stack_size(STACK_MB * MB)
             .spawn(start)
             .unwrap()
             .join()
-            .unwrap());
+            .unwrap()
     } else {
-        debug_err!(start());
-    }
+        start()
+    };
+
+    debug_err!(res);
 }
 
 fn start() -> anyhow::Result<()> {
@@ -185,7 +188,7 @@ fn start() -> anyhow::Result<()> {
     let runtime = compile_text(
         raw,
         RuntimeCfg {
-            print_cast: false,
+            print_cast: true,
             verbose_compile: false,
             opt_level: Debug,
         },
