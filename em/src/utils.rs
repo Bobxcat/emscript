@@ -1,12 +1,13 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt::Debug,
     hash::Hash,
     ops::{Index, IndexMut},
     rc::Rc,
 };
 
-use bimap::BiMap;
+use bimap::{BiHashMap, BiMap};
 
 //Note about prefixes:
 //- Should have a max length of `10`, so that the formatted variable ID (which has a max length of `22`)
@@ -51,14 +52,14 @@ pub fn format_compact(mut n: u128) -> String {
 /// A HashMap which stores multiple keys of possibly different types for each value
 ///
 /// Generally, operations using `K` are faster than ones using `V`
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MultiMap<K, V, T>
 where
     K: Hash + Eq + Clone,
     V: Hash + Eq,
 {
     kmap: HashMap<K, T>,
-    vmap: BiMap<V, K>,
+    vmap: BiHashMap<V, K>,
 }
 
 impl<K, V, T> Default for MultiMap<K, V, T>
@@ -80,13 +81,21 @@ where
     V: Hash + Eq,
 {
     pub fn insert(&mut self, k1: K, k2: V, val: T) -> Option<T> {
-        self.kmap.insert(k1.clone(), val)?;
+        if let Some(t) = self.kmap.insert(k1.clone(), val) {
+            return Some(t);
+        }
 
         //It doesn't matter wether or not this insert is `Some(_)` or `None`,
         //since the same will be true for `self.kmap`
         self.vmap.insert(k2, k1);
 
         None
+    }
+    pub fn iter_k(&self) -> std::collections::hash_map::Iter<K, T> {
+        self.kmap.iter()
+    }
+    pub fn iter_keys(&self) -> bimap::hash::Iter<V, K> {
+        self.vmap.iter()
     }
     #[inline]
     pub fn get_k(&self, k: &K) -> Option<&T> {
@@ -144,5 +153,24 @@ where
 {
     fn index_mut(&mut self, index: &K) -> &mut Self::Output {
         self.kmap.get_mut(index).unwrap()
+    }
+}
+
+impl<K, V, T> Debug for MultiMap<K, V, T>
+where
+    K: Hash + Eq + Clone + Debug,
+    V: Hash + Eq + Debug,
+    T: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = self
+            .iter_keys()
+            .map(|(v, k)| {
+                let t = &self[k];
+                format!("[{k:?}, {v:?}, {t:?}]")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{s}")
     }
 }

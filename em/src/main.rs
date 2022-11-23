@@ -5,13 +5,17 @@ use em_proc::generate_translation_with_sizes;
 use interface::Interface;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wasmer::{Function, Instance, NativeFunc, Store};
+use wasmer::{Function, Instance, NativeFunc, Store, WasmPtr};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
     runtime::Runtime,
     token::tokenize,
-    value::{custom_types::str_to_type, Type},
+    traits::wasm_ptr_as_ref_mut,
+    value::{
+        custom_types::{custom_types, insert_custom_type, str_to_type},
+        CustomType, CustomTypeImpl, Type,
+    },
 };
 
 #[macro_use]
@@ -59,8 +63,7 @@ fn compile_text(
     //Build AST
     let ast = parse(tokens.clone());
     if let Err(_e) = ast {
-        println!("AST parsing error encountered");
-        println!("\n==Tokens==\n{:#?}\n=========", tokens);
+        // println!("\n==Tokens==\n{:#?}\n=========", tokens);
         return Err(anyhow::format_err!("AST parsing error encountered"));
     }
     let mut ast = ast.unwrap();
@@ -86,13 +89,7 @@ fn compile_text(
 
 //TODO:
 //1- currently, a variable declaration listed in `no_mangle_vars` *can* overlap with tmp/mangled vars
-//2- robust system for writing custom types in C. More importantly, recognize these identifiers and mangle them appropriately
-//  - provide the ability to convert `C` code into a `C` ast, or at least to recognize identifiers
-//  - IDEA: use format strings (or something like `$my_struct $my_ident`) to notate identifiers in the C code which reference
-//    outside the method and need to be mangled (including struct names/fields).
-//    _
-//  - when writing a custom struct, able to define the fields of the struct using `Type` accompanied by an un-mangled name
-//  - write the body of methods individually using these rules and provide the MethodDef info seperately
+//2- Declare all code-defined methods at the top of the file, show their declarations in arbitrary order
 
 //HOW TO WRITE `.api` FILES:
 //- Each .api file consists of a sequence of method declarations and type declarations
@@ -117,15 +114,8 @@ fn compile_text(
 
 //Dirty fix to deal with stack overflow for now (without having to use `--release`)
 fn main() {
-    const SECONDARY_THREAD: bool = false;
-    macro_rules! debug_err {
-        ($res:expr) => {
-            if let Err(e) = $res {
-                println!("Error encountered:\n{}", e);
-            }
-        };
-    }
-    let res = if SECONDARY_THREAD {
+    //Launch the `start` method on a second thread, with controlled stack size, and block for it
+    let res = {
         use std::thread::*;
         const KB: usize = 1024;
         const MB: usize = 1024 * KB;
@@ -137,11 +127,11 @@ fn main() {
             .unwrap()
             .join()
             .unwrap()
-    } else {
-        start()
     };
 
-    debug_err!(res);
+    if let Err(e) = res {
+        println!("Error encountered:\n{}", e);
+    }
 }
 
 fn start() -> anyhow::Result<()> {
@@ -153,6 +143,57 @@ fn start() -> anyhow::Result<()> {
     let interface = {
         use StdImport::*;
         let mut i = Interface::new_with_std(vec![StdOut].into_iter().collect(), &store, &env);
+
+        //Custom Types
+
+        // //`String`
+        // {
+        //     let t = CustomType {
+        //         name: "String".into(),
+        //         fields: vec![("start".into(), WasmPtr<u8>)].collect(),
+        //         implementation: todo!(),
+        //     };
+        //     insert_custom_type(t);
+        // }
+
+        //`Foo`
+        {
+            let t = CustomType {
+                name: "Foo".into(),
+                mangled_name: None,
+                fields: vec![("a".into(), Type::Int32), ("b".into(), Type::Int32)]
+                    .into_iter()
+                    .collect(),
+                implementation: CustomTypeImpl::Shared,
+            };
+            insert_custom_type(t);
+        }
+
+        //Methods
+
+        //`foo_new`
+        {
+            #[repr(C)]
+            struct Foo {
+                a: i32,
+                b: i32,
+            }
+            fn foo_new(a: i32, b: i32) -> Foo {
+                Foo { a, b }
+            }
+            i.insert(MethodImport {
+                mod_name: "env".into(),
+                method_name: "foo_new".into(),
+                params: vec![Type::Int32, Type::Int32],
+                ret: str_to_type("Foo").unwrap(),
+                f: Function::new_native_with_env(
+                    &store,
+                    env.clone(),
+                    generate_translation_with_sizes!(fn foo_new(i32, i32) -> Foo; (1, 1) -> 2),
+                ),
+            });
+        }
+
         //`add`
         {
             fn add(a: i32, b: i32) -> i32 {
@@ -165,7 +206,7 @@ fn start() -> anyhow::Result<()> {
                 ret: Type::Int32,
                 f: Function::new_native_with_env(
                     &store,
-                    env,
+                    env.clone(),
                     generate_translation_with_sizes!(fn add(i32, i32) -> i32; (1, 1) -> 1),
                 ),
             });
@@ -188,7 +229,7 @@ fn start() -> anyhow::Result<()> {
     let runtime = compile_text(
         raw,
         RuntimeCfg {
-            print_cast: true,
+            print_cast: false,
             verbose_compile: false,
             opt_level: Debug,
         },
@@ -202,13 +243,13 @@ fn start() -> anyhow::Result<()> {
         let f_hello: NativeFunc<(), i32> = runtime.exports.get_native_function("hello")?;
         let f_hello_ret = f_hello.call()?;
 
-        println!("\nReturned from `hello(..)` call: {f_hello_ret}");
+        println!("\nReturned from `hello()` call: {f_hello_ret}");
     }
     {
         let f_fib: NativeFunc<i32, i32> = runtime.exports.get_native_function("fibonacci")?;
-        let f_fib = f_fib.call(500)?;
+        let f_fib = f_fib.call(15)?;
 
-        println!("\nReturned from `fibonacci(..)` call: {f_fib}");
+        println!("\nReturned from `fibonacci(15)` call: {f_fib}");
     }
 
     Ok(())

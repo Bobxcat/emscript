@@ -32,6 +32,7 @@ enum TokenType {
     RBracket,
     Semicolon,
     Comma,
+    Period,
     Arrow, //`->`
 }
 
@@ -112,6 +113,7 @@ impl TokenType {
             TokenType::RBracket => Token::RBracket(ctx),
             TokenType::Semicolon => Token::Semicolon(ctx),
             TokenType::Comma => Token::Comma(ctx),
+            TokenType::Period => Token::Period(ctx),
             TokenType::Arrow => Token::Arrow(ctx),
             TokenType::MethodCallStart => {
                 //The text is just the identifier without the `(` at the end
@@ -157,6 +159,7 @@ lazy_static! {
             .token(r"[{]", LBracket)
             .token(r"[}]", RBracket)
             .token(r",", Comma)
+            .token(r"\.", Period)
 
             //Keywords
             .token(r"->", Arrow)

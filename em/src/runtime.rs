@@ -241,8 +241,22 @@ impl Runtime {
                 OptLevel::Debug => "-O1",
                 OptLevel::Release => "-O3",
             };
+
+            let args = [
+                "main.c",
+                "--target=wasm32",
+                "-nostdlib",            //No std lib for better control of environment
+                "-Wl,--no-entry", //No `main` method, allow the runtime to call any method when it wants
+                "-Wl,--export-all", //As of now, all methods are exported
+                "-fbracket-depth=2048", //Many brackets are created in compilation, so high depth is needed
+                "-Wno-missing-declarations", //Compiled struct names don't have names, only aliases
+                "-o",
+                "main.wasm",
+                opt_flag,
+            ];
+
             if self.cfg.verbose_compile {
-                println!("Running `clang main.c --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-all -o main.wasm {opt_flag}`");
+                println!("Running `clang {}`", args.join(" "));
             }
             let mut clang = Command::new("clang");
             let absolute_c_target_path = canonicalize(&PathBuf::from("../").join(&self.c_dir))?;
@@ -253,17 +267,7 @@ impl Runtime {
                 );
             }
             clang.current_dir(absolute_c_target_path);
-            clang.args([
-                "main.c",
-                "--target=wasm32",
-                "-nostdlib", //No std lib to control environment
-                "-Wl,--no-entry",
-                "-Wl,--export-all",     //As of now, all methods are exported
-                "-fbracket-depth=2048", //Many brackets are created in compilation, so high depth is needed
-                "-o",
-                "main.wasm",
-                opt_flag,
-            ]);
+            clang.args(args);
             let mut clang_handle = match clang.spawn() {
                 Ok(handle) => handle,
                 Err(e) => match e.kind() {

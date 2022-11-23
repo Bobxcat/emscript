@@ -12,7 +12,7 @@ use crate::{
     ir::{IRNode, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::{format_compact, PREFIX_TMP},
-    value::{Type, Value},
+    value::{custom_types::custom_types, Type, Value},
 };
 
 lazy_static! {
@@ -45,6 +45,14 @@ pub enum CASTNode {
         name: String,
         inputs: Vec<(Type, String)>,
         return_type: Type,
+    },
+    /// Represents a struct definition
+    StructDef {
+        name: String,
+        fields: Vec<(Type, String)>,
+    },
+    StructDec {
+        name: String,
     },
     /// `{name}({input1}, {input2}, ..)`
     MethodCall {
@@ -87,6 +95,10 @@ pub enum CASTNode {
     ///
     /// `0` children
     VarRef(String),
+    /// Represents a reference to a field, with the child being the object the field belongs to
+    ///
+    /// `1` child
+    FieldRef(String),
     /// `return {child};`
     ///
     /// `1` child
@@ -153,6 +165,11 @@ impl std::fmt::Display for CASTNode {
                     cast_type_to_string(return_type.clone())
                 )
             }
+            StructDef { name, fields } => {
+                todo!("TODO: implement `Display` for `CASTNode::StructDef`");
+            }
+            StructDec { name } => format!("StructDec: {name}"),
+
             MethodCall { name, inputs } => format!("MethodCall: `{name}({})`", inputs.join(", ")),
 
             Assign(name) => format!("Assign `{name}`"),
@@ -169,6 +186,7 @@ impl std::fmt::Display for CASTNode {
             Sub => format!("Sub"),
             Return => format!("Return"),
             VarRef(name) => format!("VarRef `{name}`"),
+            FieldRef(name) => format!("FieldRef `{name}`"),
             VarDecAssign { name, t } => {
                 format!("DeclareAssign `{} {name}`", cast_type_to_string(t.clone()))
             }
@@ -208,7 +226,13 @@ fn cast_type_to_string(t: Type) -> String {
         Type::Int32 => format!("int"),
 
         //:(
-        Type::Custom(_) => todo!(),
+        Type::Custom(id) => custom_types()
+            .get_k(&id)
+            .unwrap()
+            .mangled_name
+            .as_ref()
+            .unwrap()
+            .clone(),
     }
 }
 
@@ -231,6 +255,7 @@ pub fn cast_to_string(cast: &Tree<CASTNode>) -> String {
 /// The recursive backend of `cast_to_string`. Some notes:
 /// - To reduce the size of the output string, spaces and newlines are used minimally
 fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
+    use CASTNode::*;
     let children = cast[curr].children.clone();
 
     /// Recursively calls `cast_to_string_recurse` on the provided node (given an index in `children`)
@@ -258,9 +283,9 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
     }
 
     match &cast[curr].data {
-        CASTNode::Ignore => join_all_children!(""), //\n
-        CASTNode::Literal(val) => cast_literal_to_string(val),
-        CASTNode::MethodDef {
+        Ignore => join_all_children!(""), //\n
+        Literal(val) => cast_literal_to_string(val),
+        MethodDef {
             name,
             inputs,
             return_type,
@@ -274,7 +299,7 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
             let body_string = join_all_children!(""); //\n
             format!("{return_type_string} {name}({inputs_string}) {{\n{body_string}\n}}")
         }
-        CASTNode::ExternMethodDef {
+        ExternMethodDef {
             mod_name,
             imp_name,
             name,
@@ -289,33 +314,43 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
             let return_type_string = cast_type_to_string(return_type.clone());
             format!("__attribute__((import_module(\"{mod_name}\"), import_name(\"{imp_name}\"))) extern {return_type_string} {name}({inputs_string});")
         }
-        CASTNode::MethodCall { name, inputs } => format!("{name}({})", inputs.join(",")),
-        CASTNode::If => format!("if ({}) {{{}}}", child!(0), child!(1)),
+        StructDef { name, fields } => {
+            let fields_string = fields
+                .into_iter()
+                .map(|(t, name)| format!("{} {name};", cast_type_to_string(t.clone())))
+                .collect::<Vec<_>>()
+                .join("");
+            format!("typedef struct {{{fields_string}}} {name};")
+        }
+        StructDec { name } => format!("typedef struct {name};"),
+        MethodCall { name, inputs } => format!("{name}({})", inputs.join(",")),
+        If => format!("if ({}) {{{}}}", child!(0), child!(1)),
 
         //Basic bin ops
-        CASTNode::Add => format!("({}+{})", child!(0), child!(1)),
-        CASTNode::Sub => format!("({}-{})", child!(0), child!(1)),
-        CASTNode::Mul => format!("({}*{})", child!(0), child!(1)),
-        CASTNode::Div => format!("({}/{})", child!(0), child!(1)),
-        CASTNode::Eq => format!("({}=={})", child!(0), child!(1)),
-        CASTNode::Ne => format!("({}!={})", child!(0), child!(1)),
-        CASTNode::Gt => format!("({}>{})", child!(0), child!(1)),
-        CASTNode::Lt => format!("({}<{})", child!(0), child!(1)),
-        CASTNode::Ge => format!("({}>={})", child!(0), child!(1)),
-        CASTNode::Le => format!("({}<={})", child!(0), child!(1)),
+        Add => format!("({}+{})", child!(0), child!(1)),
+        Sub => format!("({}-{})", child!(0), child!(1)),
+        Mul => format!("({}*{})", child!(0), child!(1)),
+        Div => format!("({}/{})", child!(0), child!(1)),
+        Eq => format!("({}=={})", child!(0), child!(1)),
+        Ne => format!("({}!={})", child!(0), child!(1)),
+        Gt => format!("({}>{})", child!(0), child!(1)),
+        Lt => format!("({}<{})", child!(0), child!(1)),
+        Ge => format!("({}>={})", child!(0), child!(1)),
+        Le => format!("({}<={})", child!(0), child!(1)),
 
         //Misc
-        CASTNode::Semicolon => format!("{};", child!(0)),
-        CASTNode::Brackets => format!("{{{}}}", join_all_children!("")), //\n
-        CASTNode::Assign(name) => format!("{name} = {}", child!(0)),
-        CASTNode::VarDec { name, t } => format!("{} {name}", cast_type_to_string(t.clone())),
-        CASTNode::VarDecList { names, t } => {
+        Semicolon => format!("{};", child!(0)),
+        Brackets => format!("{{{}}}", join_all_children!("")), //\n
+        Assign(name) => format!("{name} = {}", child!(0)),
+        VarDec { name, t } => format!("{} {name}", cast_type_to_string(t.clone())),
+        VarDecList { names, t } => {
             let list = names.join(", ");
             format!("{} {list}", cast_type_to_string(t.clone()))
         }
-        CASTNode::Return => format!("return {};", child!(0)),
-        CASTNode::VarRef(name) => format!("{name}"),
-        CASTNode::VarDecAssign { name, t } => {
+        Return => format!("return {};", child!(0)),
+        VarRef(name) => format!("{name}"),
+        FieldRef(name) => format!("{}.{name}", child!(0)),
+        VarDecAssign { name, t } => {
             format!("{} {name} = {}", cast_type_to_string(t.clone()), child!(0))
         }
     }
@@ -334,29 +369,67 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result
         &mut used_wasm_imports,
     )?;
 
-    //Add all the `extern` method declarations at the begining
     let head = ast.find_head().unwrap();
 
-    //Note: this same code exists in `IRAST::from_ast`
-    for (name, mangled) in used_wasm_imports {
-        let imp = &interface.wasm_imports[&name];
+    //NOTE:
+    //Since the following operations are **PREPENDING** (not appending), earlier additions occur later in the file
 
-        let mut param_idx = 0;
-        let method_dec = ast.new_node(CASTNode::ExternMethodDef {
-            mod_name: imp.mod_name.clone(),
-            imp_name: name,
-            name: mangled,
-            inputs: imp
-                .params
-                .iter()
-                .map(|t| {
-                    param_idx += 1;
-                    (*t, format!("_{param_idx}"))
-                })
-                .collect(),
-            return_type: imp.ret.clone(),
-        });
-        ast.prepend_to(head, method_dec)?;
+    //Add all the `extern` method declarations after type declarations and definitions
+    {
+        //Note: this same code exists in `IRAST::from_ast`
+        for (name, mangled) in used_wasm_imports {
+            let imp = &interface.wasm_imports[&name];
+
+            let mut param_idx = 0;
+            let method_dec = ast.new_node(CASTNode::ExternMethodDef {
+                mod_name: imp.mod_name.clone(),
+                imp_name: name,
+                name: mangled,
+                inputs: imp
+                    .params
+                    .iter()
+                    .map(|t| {
+                        param_idx += 1;
+                        (*t, format!("_{param_idx}"))
+                    })
+                    .collect(),
+                return_type: imp.ret.clone(),
+            });
+            ast.prepend_to(head, method_dec)?;
+        }
+    }
+
+    //Add all custom type definitions after their declarations
+    {
+        let custom_types = custom_types();
+        for (_id, t) in custom_types.iter_k() {
+            let struct_def = ast.new_node(CASTNode::StructDef {
+                name: t
+                    .mangled_name
+                    .clone()
+                    .expect(&format!("a custom type's name was not mangled: {t:#?}")),
+                fields: t
+                    .fields
+                    .iter()
+                    .map(|(name, t)| (*t, name.clone()))
+                    .collect(),
+            });
+            ast.prepend_to(head, struct_def)?;
+        }
+    }
+
+    //Add all custom type declarations
+    {
+        let custom_types = custom_types();
+        for (_, t) in custom_types.iter_k() {
+            let struct_def = ast.new_node(CASTNode::StructDec {
+                name: t
+                    .mangled_name
+                    .clone()
+                    .expect(&format!("a custom type's name was not mangled: {t:#?}")),
+            });
+            ast.prepend_to(head, struct_def)?;
+        }
     }
 
     Ok(ast)
@@ -423,10 +496,10 @@ fn ir_ast_to_cast_recurse(
         }};
     }
 
-    /// Wraps the inputted code to a local method with proper parameters and calls
+    /// Wraps the inputted code to a local method with proper parameters and calls said method
     macro_rules! branch_function {
         {$($toks:tt)*} => {{
-            let ____branch = ||-> anyhow::Result<Tree<CASTNode>>  {
+            let ____branch = move ||-> anyhow::Result<Tree<CASTNode>>  {
                 {$($toks)*}
                 Ok(cast)
             };
@@ -436,69 +509,117 @@ fn ir_ast_to_cast_recurse(
     }
 
     match &ast[curr_ast].data {
-        IRNode::Literal(val) => {
-            branch_function! {
-                //When a literal has a return var, set `{return_var} = {val};`
-                //Otherwise, just return the literal itself
-                if let Some(return_var) = return_var {
+        IRNode::Literal(val) => branch_function! {
+            //When a literal has a return var, set `{return_var} = {val};`
+            //Otherwise, just return the literal itself
+            if let Some(return_var) = return_var {
+                let semicolon = cast.new_node(CASTNode::Semicolon);
+                let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
+                let rhs = cast.new_node(CASTNode::Literal(val.clone()));
+                cast.append_to(assign, rhs)?;
+                cast.append_to(semicolon, assign)?;
+            } else {
+                single_parent!(CASTNode::Literal(val.clone()))
+            }
+        },
+
+        IRNode::VarRef(id) => branch_function! {
+            let name = ast[*id].name();
+            //When a var ref has a return var, set `{return_var} = {val};`
+            //Otherwise, just return the literal itself
+            if let Some(return_var) = return_var {
+                let semicolon = cast.new_node(CASTNode::Semicolon);
+                let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
+                let rhs = cast.new_node(CASTNode::VarRef(name.clone()));
+                cast.append_to(assign, rhs)?;
+                cast.append_to(semicolon, assign)?;
+            } else {
+                single_parent!(CASTNode::VarRef(name.clone()))
+            }
+        },
+        //Note that `FieldRef` is treated almost exactly like `VarRef`
+        IRNode::FieldRef(field_name) => branch_function! {
+            //The expansion for `FieldRef` is as follows:
+
+            // let tmp;
+            // { recurse_child!(0, tmp) }
+            //
+            // return_var = tmp.field_name;
+
+            if let Some(return_var) = return_var {
+                let parent = cast.new_node(CASTNode::Ignore);
+
+                //Declare tmp variable and use `recurse_child!` to assign it:
+                let tmp = generate_tmp();
+                let tmp_t = Type::Int32;
+                {
+                    //tmp declaration
+                    let semicolon = cast.new_node(CASTNode::Semicolon);
+                    let tmp_dec = cast.new_node(CASTNode::VarDec {
+                        name: tmp.clone(),
+                        t: tmp_t.clone(),
+                    });
+                    cast.append_to(semicolon, tmp_dec)?;
+                    cast.append_to(parent, semicolon)?;
+
+                    //tmp assignment
+                    let tmp_subtree = &mut recurse_child!(0, Some(tmp.clone()));
+                    cast.append_tree(parent, tmp_subtree)?;
+                }
+
+                //Assign `return_var = tmp.field_name`
+                {
                     let semicolon = cast.new_node(CASTNode::Semicolon);
                     let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
-                    let rhs = cast.new_node(CASTNode::Literal(val.clone()));
+                    let rhs = cast.new_node(CASTNode::FieldRef(field_name.clone()));
+                    let rhs_var = cast.new_node(CASTNode::VarRef(tmp.clone()));
+
+                    cast.append_to(rhs, rhs_var)?;
                     cast.append_to(assign, rhs)?;
                     cast.append_to(semicolon, assign)?;
-                } else {
-                    single_parent!(CASTNode::Literal(val.clone()))
+                    cast.append_to(parent, semicolon)?;
                 }
+
+                // let semicolon = cast.new_node(CASTNode::Semicolon);
+                // let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
+                // let rhs = cast.new_node(CASTNode::VarRef(name.clone()));
+                // cast.append_to(assign, rhs)?;
+                // cast.append_to(semicolon, assign)?;
+                // todo!()
+            } else {
+                single_parent!(CASTNode::FieldRef(field_name.clone()))
             }
-        }
-        IRNode::VarRef(id) => {
-            branch_function! {
-                let name = ast[*id].name();
-                //When a var ref has a return var, set `{return_var} = {val};`
-                //Otherwise, just return the literal itself
-                if let Some(return_var) = return_var {
+        },
+        IRNode::VarDef(id) => branch_function! {
+            let (t, name) = ast[*id].name_and_return_type();
+            if let None = &return_var {
+                let parent = cast.new_node(CASTNode::Ignore);
+
+                //Create a variable declaration
+                {
                     let semicolon = cast.new_node(CASTNode::Semicolon);
-                    let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
-                    let rhs = cast.new_node(CASTNode::VarRef(name.clone()));
-                    cast.append_to(assign, rhs)?;
-                    cast.append_to(semicolon, assign)?;
-                } else {
-                    single_parent!(CASTNode::VarRef(name.clone()))
+                    let var_dec = cast.new_node(CASTNode::VarDec {
+                        name: name.clone(),
+                        t,
+                    });
+                    cast.append_to(semicolon, var_dec)?;
+                    cast.append_to(parent, semicolon)?;
                 }
-            }
-        }
-        IRNode::VarDef(id) => {
-            branch_function! {
-                let name = ast[*id].name();
-                if let None = &return_var {
-                    let parent = cast.new_node(CASTNode::Ignore);
 
-                    //Create a variable declaration
-                    {
-                        let semicolon = cast.new_node(CASTNode::Semicolon);
-                        let var_dec = cast.new_node(CASTNode::VarDec {
-                            name: name.clone(),
-                            t: Type::Int32,
-                        });
-                        cast.append_to(semicolon, var_dec)?;
-                        cast.append_to(parent, semicolon)?;
-                    }
+                //Compile the rhs with `name` as return_var
+                {
+                    let brackets = cast.new_node(CASTNode::Brackets);
+                    let mut rhs = recurse_child!(0, Some(name.clone()));
 
-                    //Compile the rhs with `name` as return_var
-                    {
-                        let brackets = cast.new_node(CASTNode::Brackets);
-                        let mut rhs = recurse_child!(0, Some(name.clone()));
-
-                        cast.append_tree(brackets, &mut rhs)?;
-                        cast.append_to(parent, brackets)?;
-                    }
-                } else {
-                    return Err(anyhow::format_err!(
-                        "An assignment [VarDef] occured with `return_var = {return_var:?}`, when assignment returns void"
-                    ));
+                    cast.append_tree(brackets, &mut rhs)?;
+                    cast.append_to(parent, brackets)?;
                 }
+            } else {
+                return Err(anyhow::format_err!(
+                    "An assignment [VarDef] occured with `return_var = {return_var:?}`, when assignment returns void"
+                ));
             }
-        }
+        },
         //Assignments are just variable definitions without the declaration
         IRNode::Assign(id) => branch_function! {
             let name = ast[*id].name();
@@ -672,7 +793,7 @@ fn ir_ast_to_cast_recurse(
         },
         IRNode::IfCondition => branch_function! {
             let parent = cast.new_node(CASTNode::Ignore);
-            let t = Type::Int32;
+            let tmp_conditional_t = Type::Bool;
             let tmp_conditional = generate_tmp();
             //TODO: deal with the case where the body returns `void`
             // let tmp_body = generate_tmp();
@@ -682,8 +803,7 @@ fn ir_ast_to_cast_recurse(
                 let semicolon = cast.new_node(CASTNode::Semicolon);
                 let var_dec_list = cast.new_node(CASTNode::VarDecList {
                     names: vec![tmp_conditional.clone()],
-                    // names: vec![tmp_conditional.clone(), tmp_body.clone()],
-                    t,
+                    t: tmp_conditional_t,
                 });
                 cast.append_to(semicolon, var_dec_list)?;
                 cast.append_to(parent, semicolon)?;
@@ -722,9 +842,18 @@ fn ir_ast_to_cast_recurse(
         | IRNode::Gt
         | IRNode::Le
         | IRNode::Ge => branch_function! {
+                //Compiles as follows:
+
+                // let tmp_1, tmp_2; <<must(?) have same type
+                //
+                // { recurse_child!(0, tmp_1); }
+                // { recurse_child!(0, tmp_2); }
+                //
+                // return_var = tmp_1 {op} tmp_2;
+
                 // println!("{}", Backtrace::force_capture());
                 let parent = cast.new_node(CASTNode::Ignore);
-                let t = Type::Int32; //Ah, types
+                let tmp_t = Type::Int32; //Ah, types
                 let tmp_1 = generate_tmp();
                 let tmp_2 = generate_tmp();
 
@@ -733,7 +862,7 @@ fn ir_ast_to_cast_recurse(
                     let semicolon = cast.new_node(CASTNode::Semicolon);
                     let var_dec_list = cast.new_node(CASTNode::VarDecList {
                         names: vec![tmp_1.clone(), tmp_2.clone()],
-                        t,
+                        t: tmp_t,
                     });
                     cast.append_to(semicolon, var_dec_list)?;
                     cast.append_to(parent, semicolon)?;
@@ -741,17 +870,19 @@ fn ir_ast_to_cast_recurse(
 
                 //Compile the `lhs`
                 {
+                    let lhs = &mut recurse_child!(0, Some(tmp_1.clone()));
+
                     let brackets = cast.new_node(CASTNode::Brackets);
                     cast.append_to(parent, brackets)?;
-                    let lhs = &mut recurse_child!(0, Some(tmp_1.clone()));
                     cast.append_tree(brackets, lhs)?;
                 }
 
                 //Compile the `rhs`
                 {
+                    let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
+
                     let brackets = cast.new_node(CASTNode::Brackets);
                     cast.append_to(parent, brackets)?;
-                    let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
                     cast.append_tree(brackets, rhs)?;
                 }
                 //Final assignment statement

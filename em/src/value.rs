@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
 };
@@ -31,6 +32,7 @@ pub mod custom_types {
     pub fn str_to_type(s: &str) -> Option<Type> {
         let t = TypeOrName::from_str(s);
         let custom_types = custom_types();
+
         match t {
             TypeOrName::T(t) => Some(t),
             TypeOrName::Name(s) => custom_types.get_k_from_v(&s).map(|id| Type::Custom(*id)),
@@ -47,7 +49,7 @@ pub mod custom_types {
 
     fn gen_unique_custom_type_id() -> CustomTypeId {
         let custom_types = custom_types();
-        let mut n = CustomTypeId(2 * custom_types.len());
+        let mut n = CustomTypeId(4 * custom_types.len()); //Mul by number so that, when a type is removed, it's easy to find a new one
         while custom_types.contains_k(&n) {
             n.0 += 1;
         }
@@ -72,6 +74,8 @@ pub enum Type {
 #[derive(Debug, Clone)]
 pub struct CustomType {
     pub name: String,
+    pub mangled_name: Option<String>,
+    pub fields: HashMap<String, Type>,
     pub implementation: CustomTypeImpl,
 }
 

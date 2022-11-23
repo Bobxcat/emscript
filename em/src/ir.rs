@@ -25,6 +25,10 @@ pub enum IRNode {
     ///
     /// `0` children
     VarRef(IdentID),
+    /// A reference to a field of an object. Currently just holds the name of the field (mangling should be unnecessary)
+    ///
+    /// `1` child
+    FieldRef(String),
     /// The initial declaration of a variable, where its initial value is the evalution of this node's child
     ///
     /// `1` child
@@ -117,10 +121,10 @@ impl IdentInfo {
         match self {
             IdentInfo::Var { name, .. }
             | IdentInfo::Method { name, .. }
+            | IdentInfo::ExternMethod { name, .. }
             | IdentInfo::CustomType {
                 mangled_name: name, ..
-            }
-            | IdentInfo::ExternMethod { name, .. } => name,
+            } => name,
         }
     }
     pub fn return_type(&self) -> Type {
@@ -143,10 +147,6 @@ impl IdentInfo {
 pub struct IRAST {
     pub tree: Tree<IRNode>,
     /// All identifiers in the AST
-    ///
-    /// TODO: how to deal with the difference between methods with parameter types & return type and variables,
-    /// which just have a type?
-    /// Possibly: store identifier info as an enum (method or variable). Or, have a seperate hashmap for methods
     pub idents: HashMap<IdentID, IdentInfo>,
 }
 
@@ -227,10 +227,27 @@ impl IRAST {
         //First, create an empty identifier stack. Note that the scope must be increased before first use
         let mut ident_stack = IdentScopeStack::new();
 
-        //Create initial globally scoped values, namely interface methods
-        //Note that custom types are already stored in the global state `CUSTOM_TYPES` (accessible via `custom_types()`)
+        // Create initial globally scoped values, namely interface types and methods
+
+        // Note that custom types are already stored in the global state `CUSTOM_TYPES` (accessible via `custom_types()`).
+        // So, `CustomType` identifiers are just references to the actual CustomType along with a mangled name. Also, it won't break anything if
+        // the load order of methods & types into `ident_stack` is arbitrary (since all CustomTypes already exist with the same IDs and don't rely on the methods)
 
         ident_stack.increase_scope();
+
+        //Add all custom types
+        {
+            let custom_types = custom_types();
+            for (id, t) in custom_types.iter_k() {
+                let info = IdentInfo::CustomType {
+                    mangled_name: t.name.clone(),
+                    id: *id,
+                };
+                ident_stack.new_ident(info);
+            }
+        }
+
+        //Add all methods
         //Note: this same code exists in `c_ast::ast_to_cast`
         for (name, imp) in &interface.wasm_imports {
             let mut param_idx = 0;
@@ -321,12 +338,12 @@ impl IRAST {
         macro_rules! type_or_name_to_type {
             ($t:expr) => {
                 match $t {
-                    TypeOrName::T(t) => t,
+                    TypeOrName::T(t) => *t,
                     //When recieving a custom type, get the underlying type via the `IdentStack`
                     TypeOrName::Name(type_name) => {
                         if let Some(id) = ident_stack.get_ident_from_name(type_name) {
                             match &ident_stack.global_idents[&id] {
-                                IdentInfo::CustomType {id: _, ..} => todo!(),
+                                IdentInfo::CustomType {id, ..} => Type::Custom(*id),
                                 _ => return Err(anyhow::format_err!("Identifier encountered which was expected to be a custom type but was instead `{:?}`\n{}\n",
                                 ident_stack.global_idents[&id], &ast[curr].data.context
                             ))
@@ -340,6 +357,15 @@ impl IRAST {
             };
         }
 
+        /// Formats an error using the input to `ret_err!` as input for `format!` and returns an error of that string,
+        /// including the `StringContext` of the current node after a newline
+        macro_rules! ret_err {
+            ($($toks:tt)*) => {{
+                let supplied = format!($($toks)*);
+                return Err(anyhow::format_err!("{supplied}\n{}\n", &ast[curr].data.context));
+            }};
+        }
+
         match &ast[curr].data.t {
             ASTNodeType::VariableDef { name, t } => {
                 //Variables, when declared/defined, do not affect the scope of the rhs of their assignment
@@ -351,21 +377,6 @@ impl IRAST {
                 let t = {
                     if let Some(t) = t {
                         type_or_name_to_type!(t)
-                        // match t {
-                        //     TypeOrName::T(t) => t,
-                        //     //When recieving a custom type, get the underlying type via the `IdentStack`
-                        //     TypeOrName::Name(type_name) => {
-                        //         if let Some(id) = ident_stack.get_ident_from_name(type_name) {
-                        //             match ident_stack.global_idents[&id] {
-                        //                 IdentInfo::CustomType { name, id } => todo!(),
-                        //                 _ => return Err(anyhow::format_err!("Identifier encountered which was expected to be a custom type but was instead: {:?}\n{}\n",
-                        //                 ident_stack.global_idents[&id], &ast[curr].data.context
-                        //             ))
-                        //             }
-                        //         }
-                        //         todo!()
-                        //     }
-                        // }
                     } else {
                         todo!(
                             "\n\nType inferencing is not yet supported. Consider adding an explicit type, such as `i32` \n{}\n",
@@ -377,7 +388,7 @@ impl IRAST {
                 //Generate the identifier and replace the temporary data
                 let ident = ident_stack.new_ident(IdentInfo::Var {
                     name: name.clone(),
-                    t: *t,
+                    t,
                 });
                 ir_tree[tmp].data = IRNode::VarDef(ident);
             }
@@ -391,7 +402,7 @@ impl IRAST {
                 for (t, s) in inputs {
                     let ident = ident_stack.new_ident(IdentInfo::Var {
                         name: s.clone(),
-                        t: *type_or_name_to_type!(t),
+                        t: type_or_name_to_type!(t),
                     });
                     params.push(ident);
                 }
@@ -399,7 +410,7 @@ impl IRAST {
                 let method_id = ident_stack.new_ident(IdentInfo::Method {
                     name: name.clone(),
                     params: params.clone(),
-                    return_type: *type_or_name_to_type!(return_type),
+                    return_type: type_or_name_to_type!(return_type),
                 });
                 // Finish by recursing with just this node as the parent
                 single_parent!(IRNode::MethodDef(method_id));
@@ -422,10 +433,11 @@ impl IRAST {
                 if let Some(var_id) = ident_stack.get_ident_from_name(name) {
                     single_parent!(IRNode::VarRef(var_id));
                 } else {
-                    return Err(anyhow::format_err!(
-                        "Variable referenced which was not in scope: `{name}`"
-                    ));
+                    ret_err!("Variable referenced which was not in scope: `{name}`");
                 }
+            }
+            ASTNodeType::FieldRef { field } => {
+                single_parent!(IRNode::FieldRef(field.clone()));
             }
             ASTNodeType::MethodCall { name } => {
                 // Try and find this method, if unable to then return an error
@@ -433,9 +445,7 @@ impl IRAST {
                 if let Some(method_id) = ident_stack.get_ident_from_name(name) {
                     single_parent!(IRNode::MethodCall(method_id));
                 } else {
-                    return Err(anyhow::format_err!(
-                        "Method called which was not in scope: `{name}`"
-                    ));
+                    ret_err!("Method called which was not in scope: `{name}`");
                 }
             }
             ASTNodeType::Assign { name } => {
@@ -443,9 +453,7 @@ impl IRAST {
                 if let Some(ident) = ident_stack.get_ident_from_name(name) {
                     single_parent!(IRNode::Assign(ident));
                 } else {
-                    return Err(anyhow::format_err!(
-                        "Assignment on variable which was not in scope: {name}"
-                    ));
+                    ret_err!("Assignment on variable which was not in scope: {name}");
                 }
             }
             // Trivial transformations
@@ -476,16 +484,16 @@ impl IRAST {
     /// Each identifier will only count once, and the earliest encountered matching method name will not be mangled
     pub fn mangle(&mut self, mut no_mangle_methods: HashSet<&str>) {
         let mut ident_count = 0;
+        let mut custom_types = custom_types_mut();
         for ident in self.idents.values_mut() {
             let mut mangle = true;
             let var_name = match ident {
                 //`no_mangle_methods` does not include any ExternMethod so they can just be trated normally
-                IdentInfo::Var { name, .. }
-                | IdentInfo::ExternMethod { name, .. }
+                IdentInfo::Var { name, .. } | IdentInfo::ExternMethod { name, .. } => name,
+                IdentInfo::Method { name, .. }
                 | IdentInfo::CustomType {
                     mangled_name: name, ..
-                } => name,
-                IdentInfo::Method { name, .. } => {
+                } => {
                     //If this method was in the list of no_mangle_methods, remove it and don't mangle it
                     if no_mangle_methods.remove(name.as_str()) {
                         mangle = false;
@@ -497,6 +505,12 @@ impl IRAST {
             if mangle {
                 *var_name = format!("{PREFIX_IDENT}{}_{}", format_compact(ident_count), var_name);
                 ident_count += 1;
+            }
+
+            //If it was a custom type, update `custom_types`
+            if let IdentInfo::CustomType { mangled_name, id } = ident {
+                custom_types.get_k_mut(id).as_mut().unwrap().mangled_name =
+                    Some(mangled_name.clone());
             }
         }
     }

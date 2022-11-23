@@ -51,9 +51,7 @@ pomelo! {
     %type Bool bool;
     %type Ident String;
     %type MethodCallStart String;
-    // %type TypeDec Type;
 
-    //TMP (so that the token(s) are defined)
     %nonassoc Comma;
 
     //Binary Operators
@@ -65,6 +63,8 @@ pomelo! {
     %left Lt Gt Le Ge Eq Ne;
     %left Add Sub;
     %left Mul Div;
+
+    %left Period;
 
     input ::= expr_seq(L) {
         list_to_last_value_return(L).into()
@@ -116,6 +116,11 @@ pomelo! {
     expr ::= LBracket expr_seq(L) RBracket {
         list_to_last_value_return(L)
     };
+
+    //Custom types
+
+    //Accessing member fields/methods
+    expr ::= expr(A) Period Ident((ctx, rhs)) { new_node(FieldRef { field: rhs }, ctx, vec![A]) }
 
     //Literals
     expr ::= Int((ctx, n)) { new_node(Literal { val: Value::Int(n) }, ctx, vec![]) }

@@ -47,6 +47,7 @@ impl Display for ASTNode {
             Ge => format!("Ge"),
             Assign { name } => format!("Assign: {name}"),
             VariableRef { name } => format!("Var: {name}"),
+            FieldRef { field } => format!("Field: {field}"),
             VariableDef { name, .. } => format!("Var Def: {name}"),
             ValueConsume { .. } => format!("Value consume"),
             LastValueReturn { .. } => format!("Last value return"),
@@ -83,6 +84,10 @@ pub enum ASTNodeType {
     ///
     /// `0` children
     VariableRef { name: String },
+    /// An identifier for a field of some object. The child of this node is the object whose field is being referenced
+    ///
+    /// `1` child
+    FieldRef { field: String },
     /// The initial declaration of a variable, where its initial value is the evalution of this node's child
     /// Contains a type which is `Some(_)` if the type of the variable has been determined, `None` otherwise
     ///
