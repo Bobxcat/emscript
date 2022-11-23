@@ -48,6 +48,11 @@ pub enum IRNode {
     /// `0+` children, 1 for each parameter
     MethodCall(IdentID),
 
+    /// `& {child}`
+    ///
+    /// `1` child
+    Reference,
+
     /// Represents an `if` statement
     ///
     /// `2` children, first is conditional (evaluates to bool), second is body
@@ -90,6 +95,12 @@ pub enum IRNode {
     Le,
     /// `2` children
     Ge,
+}
+
+impl std::fmt::Display for IRNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +271,7 @@ impl IRAST {
                     .iter()
                     .map(|t| {
                         param_idx += 1;
-                        (format!("_{param_idx}"), *t)
+                        (format!("_{param_idx}"), t.clone())
                     })
                     .collect(),
                 return_type: imp.ret.clone(),
@@ -319,7 +330,6 @@ impl IRAST {
                         ident_stack.increase_scope();
                     }
                     let mut subtree = Self::from_ast_recurse(ast, c, ident_stack, interface)?;
-                    // let mut subtree = recurse_on_id!(c);
                     ir_tree.append_tree($parent, &mut subtree)?;
 
                     if ast[c].data.scope_depth < ast[prev].data.scope_depth {
@@ -338,7 +348,7 @@ impl IRAST {
         macro_rules! type_or_name_to_type {
             ($t:expr) => {
                 match $t {
-                    TypeOrName::T(t) => *t,
+                    TypeOrName::T(t) => t.clone(),
                     //When recieving a custom type, get the underlying type via the `IdentStack`
                     TypeOrName::Name(type_name) => {
                         if let Some(id) = ident_stack.get_ident_from_name(type_name) {
@@ -438,6 +448,10 @@ impl IRAST {
             }
             ASTNodeType::FieldRef { field } => {
                 single_parent!(IRNode::FieldRef(field.clone()));
+            }
+            //TODO: A lot
+            ASTNodeType::Reference => {
+                single_parent!(IRNode::Reference)
             }
             ASTNodeType::MethodCall { name } => {
                 // Try and find this method, if unable to then return an error

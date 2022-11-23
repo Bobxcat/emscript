@@ -12,7 +12,10 @@ use crate::{
     ir::{IRNode, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::{format_compact, PREFIX_TMP},
-    value::{custom_types::custom_types, Type, Value},
+    value::{
+        custom_types::{custom_types, str_to_type},
+        Type, Value,
+    },
 };
 
 lazy_static! {
@@ -59,6 +62,8 @@ pub enum CASTNode {
         name: String,
         inputs: Vec<String>,
     },
+    /// `& {child}`
+    Reference,
     /// Represents an if statement
     ///
     /// `2` children, first is conditional, second is body
@@ -171,6 +176,7 @@ impl std::fmt::Display for CASTNode {
             StructDec { name } => format!("StructDec: {name}"),
 
             MethodCall { name, inputs } => format!("MethodCall: `{name}({})`", inputs.join(", ")),
+            Reference => format!("Ref"),
 
             Assign(name) => format!("Assign `{name}`"),
             If => format!("If"),
@@ -233,6 +239,7 @@ fn cast_type_to_string(t: Type) -> String {
             .as_ref()
             .unwrap()
             .clone(),
+        Type::Ref(t) => format!("{} *", cast_type_to_string(*t)),
     }
 }
 
@@ -324,6 +331,7 @@ fn cast_to_string_recurse(cast: &Tree<CASTNode>, curr: NodeId) -> String {
         }
         StructDec { name } => format!("typedef struct {name};"),
         MethodCall { name, inputs } => format!("{name}({})", inputs.join(",")),
+        Reference => format!("&({})", child!(0)),
         If => format!("if ({}) {{{}}}", child!(0), child!(1)),
 
         //Basic bin ops
@@ -390,7 +398,7 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result
                     .iter()
                     .map(|t| {
                         param_idx += 1;
-                        (*t, format!("_{param_idx}"))
+                        (t.clone(), format!("_{param_idx}"))
                     })
                     .collect(),
                 return_type: imp.ret.clone(),
@@ -411,7 +419,7 @@ pub fn ast_to_cast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result
                 fields: t
                     .fields
                     .iter()
-                    .map(|(name, t)| (*t, name.clone()))
+                    .map(|(name, t)| (t.clone(), name.clone()))
                     .collect(),
             });
             ast.prepend_to(head, struct_def)?;
@@ -551,7 +559,7 @@ fn ir_ast_to_cast_recurse(
 
                 //Declare tmp variable and use `recurse_child!` to assign it:
                 let tmp = generate_tmp();
-                let tmp_t = Type::Int32;
+                let tmp_t = str_to_type("Foo").unwrap();
                 {
                     //tmp declaration
                     let semicolon = cast.new_node(CASTNode::Semicolon);
@@ -589,6 +597,82 @@ fn ir_ast_to_cast_recurse(
             } else {
                 single_parent!(CASTNode::FieldRef(field_name.clone()))
             }
+        },
+        IRNode::Reference => branch_function! {
+            //If child is a VarRef:
+            //  return_var = &{child};
+
+            //If child is not a VarRef:
+            //  let tmp;
+            //  { recurse_child!(0, tmp) }
+            //  return_var = &tmp;
+
+            let parent = cast.new_node(CASTNode::Ignore);
+            let return_var_rhs_name; //Either `_tmp{..}` or `{child_name}`
+
+            if let IRNode::VarRef(child_name) = ast[children[0]].data {
+                return_var_rhs_name = ast[child_name].name().clone();
+            } else {
+                let tmp = generate_tmp();
+                let tmp_t = str_to_type("Foo").unwrap();
+
+                //`let tmp;`
+                {
+                    let semicolon = cast.new_node(CASTNode::Semicolon);
+                    let var_dec = cast.new_node(CASTNode::VarDec {
+                        name: tmp.clone(),
+                        t: tmp_t.clone(),
+                    });
+                    cast.append_to(semicolon, var_dec)?;
+                    cast.append_to(parent, semicolon)?;
+                }
+
+                //`{ recurse_child!(..) }`
+                {
+                    let brackets = cast.new_node(CASTNode::Brackets);
+                    let subtree = &mut recurse_child!(0, Some(tmp.clone()));
+                    cast.append_tree(brackets, subtree)?;
+                    cast.append_to(parent, brackets)?;
+                }
+
+                return_var_rhs_name = tmp;
+            }
+
+            //`return_var = &{return_var_rhs_name};`
+            if let Some(return_var) = return_var {
+                let assign = cast.new_node(CASTNode::Assign(return_var));
+                let semicolon = cast.new_node(CASTNode::Semicolon);
+
+                let rhs = cast.new_node(CASTNode::Reference);
+                let rhs_var = cast.new_node(CASTNode::VarRef(return_var_rhs_name));
+
+                cast.append_to(rhs, rhs_var)?;
+                cast.append_to(assign, rhs)?;
+                cast.append_to(semicolon, assign)?;
+                cast.append_to(parent, semicolon)?;
+            }
+            // let tmp = generate_tmp();
+            // let tmp_t = str_to_type("Foo").unwrap();
+
+            // //`let tmp;`
+            // {
+            //     let semicolon = cast.new_node(CASTNode::Semicolon);
+            //     let var_dec = cast.new_node(CASTNode::VarDec {
+            //         name: tmp.clone(),
+            //         t: tmp_t.clone(),
+            //     });
+            //     cast.append_to(semicolon, var_dec)?;
+            //     cast.append_to(parent, semicolon)?;
+            // }
+
+            // //`{ recurse_child!(..) }`
+            // {
+            //     let brackets = cast.new_node(CASTNode::Brackets);
+            //     let subtree = &mut recurse_child!(0, Some(tmp.clone()));
+            //     cast.append_tree(brackets, subtree)?;
+            //     cast.append_to(parent, brackets)?;
+            // }
+
         },
         IRNode::VarDef(id) => branch_function! {
             let (t, name) = ast[*id].name_and_return_type();
@@ -886,9 +970,9 @@ fn ir_ast_to_cast_recurse(
                     cast.append_tree(brackets, rhs)?;
                 }
                 //Final assignment statement
-                {
+                if let Some(return_var) = return_var {
                     let semicolon = cast.new_node(CASTNode::Semicolon);
-                    let assignment = cast.new_node(CASTNode::Assign(return_var.unwrap()));
+                    let assignment = cast.new_node(CASTNode::Assign(return_var));
                     cast.append_to(semicolon, assignment)?;
                     cast.append_to(parent, semicolon)?;
 
@@ -937,431 +1021,3 @@ fn ir_ast_to_cast_recurse(
         }},
     }
 }
-
-//Old version, pre-creating individual branch functions
-// /// * `ast` - The input AST for EmScript code
-// /// * `curr_ast` - The current node to be evaluated in `ast`
-// /// * `expr_tmp_vars` - The name of the variable which should be assigned to in this
-// /// * `used_wasm_imports` - Denotes which `wasm_imports` have been used from the interface.
-// ///     The first of each tuple is the original method name, the latter is the mangled name
-// fn ir_ast_to_cast_recurse(
-//     ast: &IRAST,
-//     curr_ast: NodeId,
-//     return_var: Option<String>,
-//     used_wasm_imports: &mut HashSet<(String, String)>,
-// ) -> anyhow::Result<Tree<CASTNode>> {
-//     let children = ast[curr_ast].children;
-
-//     let mut cast = Tree::new();
-
-//     /// Shorthand for adding a node to `cast` and appending all children of `curr_ast` to it
-//     ///
-//     /// `return_var` will be passed *only* to the last child. All others will receive `None`
-//     macro_rules! single_parent {
-//         ($child:expr) => {{
-//             let n = cast.new_node($child);
-//             if !children.is_empty() {
-//                 for i in 0..children.len() - 1 {
-//                     let c = children[i];
-//                     let mut c_tree = ir_ast_to_cast_recurse(ast, c, None, used_wasm_imports)?;
-//                     cast.append_tree(n, &mut c_tree)?;
-//                 }
-//                 let last_child = children.last().unwrap();
-//                 let mut c_tree =
-//                     ir_ast_to_cast_recurse(ast, *last_child, return_var, used_wasm_imports)?;
-//                 cast.append_tree(n, &mut c_tree)?;
-//             }
-//         }};
-//     }
-
-//     macro_rules! single_parent_no_return {
-//         ($child:expr) => {{
-//             let n = cast.new_node($child);
-//             for i in 0..children.len() {
-//                 let c = children[i];
-//                 let mut c_tree = ir_ast_to_cast_recurse(ast, c, None, used_wasm_imports)?;
-//                 cast.append_tree(n, &mut c_tree)?;
-//             }
-//         }};
-//     }
-
-//     /// * `child_index`
-//     /// * `return_var`
-//     macro_rules! recurse_child {
-//         ($child_index:expr, $return_var:expr) => {{
-//             ir_ast_to_cast_recurse(ast, children[$child_index], $return_var, used_wasm_imports)?
-//         }};
-//     }
-
-//     match &ast[curr_ast].data {
-//         IRNode::Literal(val) => {
-//             //When a literal has a return var, set `{return_var} = {val};`
-//             //Otherwise, just return the literal itself
-//             if let Some(return_var) = return_var {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
-//                 let rhs = cast.new_node(CASTNode::Literal(val.clone()));
-//                 cast.append_to(assign, rhs)?;
-//                 cast.append_to(semicolon, assign)?;
-//             } else {
-//                 single_parent!(CASTNode::Literal(val.clone()))
-//             }
-//         }
-//         IRNode::VarRef(id) => {
-//             let name = ast[*id].name();
-//             //When a var ref has a return var, set `{return_var} = {val};`
-//             //Otherwise, just return the literal itself
-//             if let Some(return_var) = return_var {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
-//                 let rhs = cast.new_node(CASTNode::VarRef(name.clone()));
-//                 cast.append_to(assign, rhs)?;
-//                 cast.append_to(semicolon, assign)?;
-//             } else {
-//                 single_parent!(CASTNode::VarRef(name.clone()))
-//             }
-//         }
-//         IRNode::VarDef(id) => {
-//             let name = ast[*id].name();
-//             if let None = &return_var {
-//                 let parent = cast.new_node(CASTNode::Ignore);
-
-//                 //Create a variable declaration
-//                 {
-//                     let semicolon = cast.new_node(CASTNode::Semicolon);
-//                     let var_dec = cast.new_node(CASTNode::VarDec {
-//                         name: name.clone(),
-//                         t: Type::Int32,
-//                     });
-//                     cast.append_to(semicolon, var_dec)?;
-//                     cast.append_to(parent, semicolon)?;
-//                 }
-
-//                 //Compile the rhs with `name` as return_var
-//                 {
-//                     let brackets = cast.new_node(CASTNode::Brackets);
-//                     let mut rhs = recurse_child!(0, Some(name.clone()));
-
-//                     cast.append_tree(brackets, &mut rhs)?;
-//                     cast.append_to(parent, brackets)?;
-//                 }
-//             } else {
-//                 return Err(anyhow::format_err!(
-//                     "An assignment [VarDef] occured with `return_var = {return_var:?}`, when assignment returns void"
-//                 ));
-//             }
-//         }
-//         //Assignments are just variable definitions without the declaration
-//         IRNode::Assign(id) => {
-//             let name = ast[*id].name();
-
-//             if let None = &return_var {
-//                 let parent = cast.new_node(CASTNode::Ignore);
-
-//                 //Compile the rhs with `name` as return_var
-//                 {
-//                     let brackets = cast.new_node(CASTNode::Brackets);
-//                     let mut rhs = recurse_child!(0, Some(name.clone()));
-
-//                     cast.append_tree(brackets, &mut rhs)?;
-//                     cast.append_to(parent, brackets)?;
-//                 }
-//             } else {
-//                 return Err(anyhow::format_err!(
-//                     "An assignment [Assign] occured with `return_var = {return_var:?}`, when assignment returns void"
-//                 ));
-//             }
-//         }
-//         IRNode::MethodDef(id) => {
-//             // Gather the method's information
-//             let (name, inputs, return_type) = {
-//                 let method_info = &ast[*id];
-
-//                 if let IdentInfo::Method {
-//                     name,
-//                     params,
-//                     return_type,
-//                 } = method_info
-//                 {
-//                     (name, params, return_type.clone())
-//                 } else {
-//                     return Err(anyhow::format_err!(
-//                     "Should never happen: attempted to parse `MethodDef` whose identifier referred to a `Var`, not `Method` ({})",
-//                     method_info.name()
-//                     ));
-//                 }
-//             };
-//             //Create the parent, which will be a `MethodDef` node
-//             let inputs: Vec<_> = inputs
-//                 .iter()
-//                 .map(|id| {
-//                     let (t, s) = ast[*id].name_and_return_type();
-//                     (t, s.clone())
-//                 })
-//                 .collect();
-//             let parent = cast.new_node(CASTNode::MethodDef {
-//                 name: name.clone(),
-//                 inputs: inputs.clone(),
-//                 return_type: return_type.clone(),
-//             });
-//             //Create a temporary variable to hold the return value
-//             let return_val_tmp = generate_tmp();
-//             {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let return_val_dec = cast.new_node(CASTNode::VarDec {
-//                     name: return_val_tmp.clone(),
-//                     t: return_type.clone(),
-//                 });
-//                 cast.append_to(semicolon, return_val_dec)?;
-//                 cast.append_to(parent, semicolon)?;
-//             }
-
-//             //Recurse on the body using the return value `return_val_tmp`
-//             {
-//                 let child = &mut recurse_child!(0, Some(return_val_tmp.clone()));
-//                 cast.append_tree(parent, child)?;
-//             }
-
-//             //Return the temporary return value
-//             {
-//                 let return_statement = cast.new_node(CASTNode::Return);
-//                 let return_val_ref = cast.new_node(CASTNode::VarRef(return_val_tmp));
-//                 cast.append_to(return_statement, return_val_ref)?;
-//                 cast.append_to(parent, return_statement)?;
-//             }
-//         }
-//         IRNode::MethodCall(id) => {
-//             // Gather the method's information
-//             let (name, inputs, ret) = {
-//                 let method_info = &ast[*id];
-
-//                 if let IdentInfo::Method {
-//                     name,
-//                     params,
-//                     return_type,
-//                 } = method_info
-//                 {
-//                     (
-//                         name,
-//                         params
-//                             .into_iter()
-//                             .map(|id| (ast[*id].name().clone(), ast[*id].return_type()))
-//                             .collect::<Vec<_>>(),
-//                         return_type.clone(),
-//                     )
-//                 } else if let IdentInfo::ExternMethod {
-//                     imp_name,
-//                     name,
-//                     params,
-//                     return_type,
-//                     ..
-//                 } = method_info
-//                 {
-//                     used_wasm_imports.insert((imp_name.clone(), name.clone()));
-//                     (name, params.clone(), return_type.clone())
-//                 } else {
-//                     return Err(anyhow::format_err!(
-//                     "Should never happen: attempted to parse `MethodCall` whose identifier referred to a `Var`, not `Method` ({})",
-//                     method_info.name()
-//                     ));
-//                 }
-//             };
-//             // println!("Method call: {:?}", ast[*id].name_and_return_type());
-
-//             let parent = cast.new_node(CASTNode::Ignore);
-
-//             //A list of the names and types of all temporary variables for holding parameter values
-//             let mut params_tmp_vars = Vec::with_capacity(children.len());
-//             //For each parameter, create a temporary variable
-//             for i in 0..children.len() {
-//                 //Generate the temporary variable
-//                 let param_tmp_var = generate_tmp();
-//                 // let t = ast[inputs[i]].return_type();
-//                 let t = inputs[i].1.clone();
-
-//                 //Create the representation for the tmp var in `cast`
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let param_tmp_dec = cast.new_node(CASTNode::VarDec {
-//                     name: param_tmp_var.clone(),
-//                     t: t.clone(),
-//                 });
-//                 cast.append_to(semicolon, param_tmp_dec)?;
-//                 cast.append_to(parent, semicolon)?;
-
-//                 //Recurse on the parameter using `param_tmp_var`
-//                 {
-//                     let child = &mut recurse_child!(i, Some(param_tmp_var.clone()));
-//                     cast.append_tree(parent, child)?;
-//                 }
-
-//                 //Push the temporary variable to the list of params
-//                 params_tmp_vars.push((t.clone(), param_tmp_var));
-//             }
-
-//             //Finish by adding the method call itself, which assigns to `return_val`
-//             //Method calls where `return_val == None` will not assign at all
-//             {
-//                 //Regarless of whether or not there's a return type, create the semicolon/method call subtree
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let inputs = params_tmp_vars.into_iter().map(|(_, name)| name).collect();
-
-//                 let method_call = cast.new_node(CASTNode::MethodCall {
-//                     name: name.clone(),
-//                     inputs,
-//                 });
-
-//                 if let Some(return_var) = return_var {
-//                     let assign = cast.new_node(CASTNode::Assign(return_var.clone()));
-
-//                     cast.append_to(assign, method_call)?;
-//                     cast.append_to(semicolon, assign)?;
-//                     cast.append_to(parent, semicolon)?;
-//                 } else {
-//                     cast.append_to(semicolon, method_call)?;
-//                     cast.append_to(parent, semicolon)?;
-//                 }
-//             }
-//         }
-//         IRNode::IfCondition => {
-//             let parent = cast.new_node(CASTNode::Ignore);
-//             let t = Type::Int32;
-//             let tmp_conditional = generate_tmp();
-//             //TODO: deal with the case where the body returns `void`
-//             // let tmp_body = generate_tmp();
-
-//             //Create declarations for the temp variables
-//             {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let var_dec_list = cast.new_node(CASTNode::VarDecList {
-//                     names: vec![tmp_conditional.clone()],
-//                     // names: vec![tmp_conditional.clone(), tmp_body.clone()],
-//                     t,
-//                 });
-//                 cast.append_to(semicolon, var_dec_list)?;
-//                 cast.append_to(parent, semicolon)?;
-//             }
-
-//             //Compile conditional value
-//             {
-//                 let brackets = cast.new_node(CASTNode::Brackets);
-//                 cast.append_to(parent, brackets)?;
-
-//                 let condition = &mut recurse_child!(0, Some(tmp_conditional.clone()));
-//                 cast.append_tree(brackets, condition)?;
-//             }
-//             //Compile if-statement
-//             {
-//                 let if_statement = cast.new_node(CASTNode::If);
-//                 cast.append_to(parent, if_statement)?;
-
-//                 //Append condition
-//                 let condition = cast.new_node(CASTNode::VarRef(tmp_conditional.clone()));
-//                 cast.append_to(if_statement, condition)?;
-
-//                 //Append body
-//                 let body = &mut recurse_child!(1, return_var.clone());
-//                 cast.append_tree(if_statement, body)?;
-//             }
-//         }
-//         //Binary operations
-//         IRNode::Add
-//         | IRNode::Sub
-//         | IRNode::Mul
-//         | IRNode::Div
-//         | IRNode::Eq
-//         | IRNode::Ne
-//         | IRNode::Lt
-//         | IRNode::Gt
-//         | IRNode::Le
-//         | IRNode::Ge => {
-//             println!("{}", Backtrace::force_capture());
-//             let parent = cast.new_node(CASTNode::Ignore);
-//             let t = Type::Int32; //Ah, types
-//             let tmp_1 = generate_tmp();
-//             let tmp_2 = generate_tmp();
-
-//             //Create declarations for the temp variables
-//             {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let var_dec_list = cast.new_node(CASTNode::VarDecList {
-//                     names: vec![tmp_1.clone(), tmp_2.clone()],
-//                     t,
-//                 });
-//                 cast.append_to(semicolon, var_dec_list)?;
-//                 cast.append_to(parent, semicolon)?;
-//             }
-
-//             //Compile the `lhs`
-//             {
-//                 let brackets = cast.new_node(CASTNode::Brackets);
-//                 cast.append_to(parent, brackets)?;
-//                 let lhs = &mut recurse_child!(0, Some(tmp_1.clone()));
-//                 cast.append_tree(brackets, lhs)?;
-//             }
-
-//             //Compile the `rhs`
-//             {
-//                 let brackets = cast.new_node(CASTNode::Brackets);
-//                 cast.append_to(parent, brackets)?;
-//                 let rhs = &mut recurse_child!(1, Some(tmp_2.clone()));
-//                 cast.append_tree(brackets, rhs)?;
-//             }
-//             //Final assignment statement
-//             {
-//                 let semicolon = cast.new_node(CASTNode::Semicolon);
-//                 let assignment = cast.new_node(CASTNode::Assign(return_var.unwrap()));
-//                 cast.append_to(semicolon, assignment)?;
-//                 cast.append_to(parent, semicolon)?;
-
-//                 //The only difference between all the bin ops is the actual operator in use
-//                 let op = {
-//                     let op = match &ast[curr_ast].data {
-//                         IRNode::Add => CASTNode::Add,
-//                         IRNode::Sub => CASTNode::Sub,
-//                         IRNode::Mul => CASTNode::Mul,
-//                         IRNode::Div => CASTNode::Div,
-//                         IRNode::Eq => CASTNode::Eq,
-//                         IRNode::Ne => CASTNode::Ne,
-//                         IRNode::Lt => CASTNode::Lt,
-//                         IRNode::Gt => CASTNode::Gt,
-//                         IRNode::Le => CASTNode::Le,
-//                         IRNode::Ge => CASTNode::Ge,
-//                         _ => unreachable!(),
-//                     };
-//                     cast.new_node(op)
-//                 };
-//                 cast.append_to(assignment, op)?;
-
-//                 let tmp_1 = cast.new_node(CASTNode::VarRef(tmp_1));
-//                 cast.append_to(op, tmp_1)?;
-//                 let tmp_2 = cast.new_node(CASTNode::VarRef(tmp_2));
-//                 cast.append_to(op, tmp_2)?;
-//             }
-
-//             // [t] [tmp_1], [tmp_2];
-//             // { [compile(lhs, tmp_1)] }
-//             // { [compile(rhs, tmp_2)] }
-//             // return_var = [tmp_1] + [tmp_2];
-//         }
-
-//         //LastValueReturn:
-//         //When parent is a method def OR there is no parent OR the parent is also a LastValueReturn, ignore
-//         //When parent is an assignment, set final child to assignment and have the parent be brackets
-//         //When parent is a VariableDef, replace `curr` with two nodes: a C::VariableDef and brackets (treated like an assignment would be)
-
-//         // `return_var` is passed to only the final child. This is handled by `single_parent` by default
-//         // When the children are method definitions, brackets would be syntatically invalid
-//         IRNode::LastValueReturn => match &ast[children[0]].data {
-//             IRNode::MethodDef { .. } | IRNode::LastValueReturn => {
-//                 single_parent_no_return!(CASTNode::Ignore)
-//             }
-//             _ => single_parent!(CASTNode::Brackets),
-//         },
-//         IRNode::ValueConsume => match &ast[children[0]].data {
-//             IRNode::VarDef { .. } => single_parent!(CASTNode::Ignore),
-//             _ => single_parent!(CASTNode::Semicolon),
-//         },
-//     }
-
-//     Ok(cast)
-// }

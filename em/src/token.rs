@@ -34,6 +34,7 @@ enum TokenType {
     Comma,
     Period,
     Arrow, //`->`
+    Ampersand,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,7 @@ impl TokenType {
                 // Token::MethodCallStart((ctx, text.to_string()[0..(text.len() - 2)].into()))
                 Token::MethodCallStart((ctx, text.to_string()))
             }
+            TokenType::Ampersand => Token::Ampersand(ctx),
         })
     }
 }
@@ -160,6 +162,7 @@ lazy_static! {
             .token(r"[}]", RBracket)
             .token(r",", Comma)
             .token(r"\.", Period)
+            .token(r"\&", Ampersand)
 
             //Keywords
             .token(r"->", Arrow)

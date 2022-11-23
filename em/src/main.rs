@@ -11,7 +11,7 @@ use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
     runtime::Runtime,
     token::tokenize,
-    traits::wasm_ptr_as_ref_mut,
+    traits::{wasm_ptr_as_ref_mut, GetRefFromMem},
     value::{
         custom_types::{custom_types, insert_custom_type, str_to_type},
         CustomType, CustomTypeImpl, Type,
@@ -69,6 +69,7 @@ fn compile_text(
     let mut ast = ast.unwrap();
 
     // println!("==AST==\n{}=======\n", ast);
+    // panic!();
 
     //At this point, a runtime needs to be created to proceed
     let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
@@ -171,27 +172,61 @@ fn start() -> anyhow::Result<()> {
 
         //Methods
 
-        //`foo_new`
+        //`Foo`
         {
             #[repr(C)]
             struct Foo {
                 a: i32,
                 b: i32,
             }
-            fn foo_new(a: i32, b: i32) -> Foo {
-                Foo { a, b }
+            impl GetRefFromMem for Foo {
+                fn as_mem_ref_mut<'a>(
+                    offset: usize,
+                    mem: &'a wasmer::Memory,
+                ) -> Option<&'a mut Self> {
+                    unsafe {
+                        let p = mem.view::<u8>()[offset].as_ptr() as *mut Self;
+                        Some(&mut *p)
+                    }
+                }
             }
-            i.insert(MethodImport {
-                mod_name: "env".into(),
-                method_name: "foo_new".into(),
-                params: vec![Type::Int32, Type::Int32],
-                ret: str_to_type("Foo").unwrap(),
-                f: Function::new_native_with_env(
-                    &store,
-                    env.clone(),
-                    generate_translation_with_sizes!(fn foo_new(i32, i32) -> Foo; (1, 1) -> 2),
-                ),
-            });
+            //`foo_new`
+            {
+                fn foo_new(a: i32, b: i32) -> Foo {
+                    Foo { a, b }
+                }
+                i.insert(MethodImport {
+                    mod_name: "env".into(),
+                    method_name: "foo_new".into(),
+                    params: vec![Type::Int32, Type::Int32],
+                    ret: str_to_type("Foo").unwrap(),
+                    f: Function::new_native_with_env(
+                        &store,
+                        env.clone(),
+                        generate_translation_with_sizes!(fn foo_new(i32, i32) -> Foo; (1, 1) -> 2),
+                    ),
+                });
+            }
+
+            //`foo_fib`
+            {
+                fn foo_fib(foo: &mut Foo) {
+                    foo.a = foo.a + foo.b;
+                    std::mem::swap(&mut foo.a, &mut foo.b);
+                    println!("{}, {}", foo.a, foo.b);
+                }
+                i.insert(MethodImport {
+                    mod_name: "env".into(),
+                    method_name: "foo_fib".into(),
+                    params: vec![Type::Ref(Box::new(str_to_type("Foo").unwrap()))],
+                    ret: Type::Void,
+                    f: Function::new_native_with_env(
+                        &store,
+                        env.clone(),
+                        generate_translation_with_sizes!(fn foo_fib(&mut Foo); (1)),
+                    ),
+                });
+            }
         }
 
         //`add`

@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
+    rc::Rc,
 };
 
 use crate::ast::ASTNodeType;
@@ -59,7 +60,7 @@ pub mod custom_types {
 }
 
 /// Represents a type, custom or builtin
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Void,
     Bool,
@@ -68,6 +69,8 @@ pub enum Type {
     /// A custom type. This is anything represented by a struct or enum.
     /// This includes things like `String`, which are not user-defined
     Custom(CustomTypeId),
+    /// `& {T}`
+    Ref(Box<Type>),
 }
 
 /// Represents a custom type
@@ -200,6 +203,7 @@ impl Display for Type {
                 Type::Int => "{integer}".into(),
                 Type::Int32 => "i32".into(),
                 Type::Custom(id) => format!("CustomType[{id}]"),
+                Type::Ref(t) => format!("&{t}"),
             }
         )
     }

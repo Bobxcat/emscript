@@ -1,6 +1,13 @@
 fn hello_again(i32 a) -> i32 {
     let i32 b = 2 + a;
     let Foo c = foo_new(1, 2);
+    {
+        foo_fib(&c);
+        foo_fib(&c);
+        foo_fib(&c);
+        foo_fib(&c);
+        foo_fib(&c);
+    }
     b
 }
 
@@ -22,11 +29,6 @@ fn hello() -> i32 {
         let i32 b = 7;
         b
     };
-    print_num({
-        let i32 b = 2;
-        b = add(b, a);
-        b - a
-    });
     //a = -6
     a = a + hello_again(a);
     //return -3

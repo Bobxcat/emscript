@@ -49,6 +49,7 @@ impl Display for ASTNode {
             VariableRef { name } => format!("Var: {name}"),
             FieldRef { field } => format!("Field: {field}"),
             VariableDef { name, .. } => format!("Var Def: {name}"),
+            Reference => format!("Ref"),
             ValueConsume { .. } => format!("Value consume"),
             LastValueReturn { .. } => format!("Last value return"),
             MethodDef {
@@ -93,6 +94,11 @@ pub enum ASTNodeType {
     ///
     /// `1` child
     VariableDef { name: String, t: Option<TypeOrName> },
+    /// `& {child}`
+    ///
+    /// `1` child
+    Reference,
+
     /// The definition for a method. The body of the code is stored as a child of this node
     ///
     /// `1` child
