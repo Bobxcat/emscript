@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    ast::{ASTNode, ASTNodeType},
+    ast::{ASTNode, ASTNodeType, StringContext},
     interface::Interface,
     tree::{Node, NodeId, Tree},
     utils::{format_compact, PREFIX_IDENT},
@@ -19,7 +19,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdentID(usize);
 #[derive(Debug, Clone)]
-pub enum IRNode {
+pub enum IRNodeType {
     Literal(Value),
     /// A variable identifier
     ///
@@ -95,6 +95,16 @@ pub enum IRNode {
     Le,
     /// `2` children
     Ge,
+}
+
+#[derive(Debug, Clone)]
+pub struct IRNode {
+    pub t: IRNodeType,
+    pub ctx: StringContext,
+    /// The type which the expression represented by this node returns.
+    ///
+    /// Before running `IRAST::set_types_recurse`, each node just has `Type::Void` (to avoid the use of `Option<Type>`)
+    pub return_type: Type,
 }
 
 impl std::fmt::Display for IRNode {
@@ -280,12 +290,18 @@ impl IRAST {
             ident_stack.new_ident(info);
         }
 
+        // Generate an untyped AST
         let tree =
             Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack, interface)?;
-        Ok(Self {
+        let tree = Self {
             tree,
             idents: ident_stack.global_idents,
-        })
+        };
+
+        // Verify and set expression types
+        tree.set_types_recurse(tree.tree.find_head().unwrap(), Type::Void)?;
+
+        Ok(tree)
     }
     /// * `ast` - the AST of the input code
     /// * `curr` - the current node in `ast` which is being transformed
@@ -380,7 +396,7 @@ impl IRAST {
             ASTNodeType::VariableDef { name, t } => {
                 //Variables, when declared/defined, do not affect the scope of the rhs of their assignment
                 //So, create a temporary parent variable when running the children and replace it later
-                let tmp = ir_tree.new_node(IRNode::Add);
+                let tmp = ir_tree.new_node(IRNodeType::Add);
                 single_parent_id!(tmp);
 
                 //Find out what the type of this variable is
@@ -400,7 +416,7 @@ impl IRAST {
                     name: name.clone(),
                     t,
                 });
-                ir_tree[tmp].data = IRNode::VarDef(ident);
+                ir_tree[tmp].data = IRNodeType::VarDef(ident);
             }
             ASTNodeType::MethodDef {
                 name,
@@ -441,23 +457,23 @@ impl IRAST {
                 // Try and find this variable, if unable to then return an error
                 // Eventually error handling may become more sophisticated
                 if let Some(var_id) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::VarRef(var_id));
+                    single_parent!(IRNodeType::VarRef(var_id));
                 } else {
                     ret_err!("Variable referenced which was not in scope: `{name}`");
                 }
             }
             ASTNodeType::FieldRef { field } => {
-                single_parent!(IRNode::FieldRef(field.clone()));
+                single_parent!(IRNodeType::FieldRef(field.clone()));
             }
             //TODO: A lot
             ASTNodeType::Reference => {
-                single_parent!(IRNode::Reference)
+                single_parent!(IRNodeType::Reference)
             }
             ASTNodeType::MethodCall { name } => {
                 // Try and find this method, if unable to then return an error
                 // Eventually error handling may become more sophisticated
                 if let Some(method_id) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::MethodCall(method_id));
+                    single_parent!(IRNodeType::MethodCall(method_id));
                 } else {
                     ret_err!("Method called which was not in scope: `{name}`");
                 }
@@ -465,31 +481,35 @@ impl IRAST {
             ASTNodeType::Assign { name } => {
                 // let ident = most_valid_ident!(name);
                 if let Some(ident) = ident_stack.get_ident_from_name(name) {
-                    single_parent!(IRNode::Assign(ident));
+                    single_parent!(IRNodeType::Assign(ident));
                 } else {
                     ret_err!("Assignment on variable which was not in scope: {name}");
                 }
             }
             // Trivial transformations
-            ASTNodeType::Literal { val } => single_parent!(IRNode::Literal(val.clone())),
-            ASTNodeType::IfCondition => single_parent!(IRNode::IfCondition),
-            ASTNodeType::Add => single_parent!(IRNode::Add),
-            ASTNodeType::Sub => single_parent!(IRNode::Sub),
-            ASTNodeType::Mul => single_parent!(IRNode::Mul),
-            ASTNodeType::Div => single_parent!(IRNode::Div),
-            ASTNodeType::Eq => single_parent!(IRNode::Eq),
-            ASTNodeType::Ne => single_parent!(IRNode::Ne),
-            ASTNodeType::Lt => single_parent!(IRNode::Lt),
-            ASTNodeType::Gt => single_parent!(IRNode::Gt),
-            ASTNodeType::Le => single_parent!(IRNode::Le),
-            ASTNodeType::Ge => single_parent!(IRNode::Ge),
-            ASTNodeType::LastValueReturn => single_parent!(IRNode::LastValueReturn),
-            ASTNodeType::ValueConsume => single_parent!(IRNode::ValueConsume),
+            ASTNodeType::Literal { val } => single_parent!(IRNodeType::Literal(val.clone())),
+            ASTNodeType::IfCondition => single_parent!(IRNodeType::IfCondition),
+            ASTNodeType::Add => single_parent!(IRNodeType::Add),
+            ASTNodeType::Sub => single_parent!(IRNodeType::Sub),
+            ASTNodeType::Mul => single_parent!(IRNodeType::Mul),
+            ASTNodeType::Div => single_parent!(IRNodeType::Div),
+            ASTNodeType::Eq => single_parent!(IRNodeType::Eq),
+            ASTNodeType::Ne => single_parent!(IRNodeType::Ne),
+            ASTNodeType::Lt => single_parent!(IRNodeType::Lt),
+            ASTNodeType::Gt => single_parent!(IRNodeType::Gt),
+            ASTNodeType::Le => single_parent!(IRNodeType::Le),
+            ASTNodeType::Ge => single_parent!(IRNodeType::Ge),
+            ASTNodeType::LastValueReturn => single_parent!(IRNodeType::LastValueReturn),
+            ASTNodeType::ValueConsume => single_parent!(IRNodeType::ValueConsume),
         }
 
         // println!("Generated tree size: {}", size_of_val(&ir_tree));
 
         Ok(ir_tree)
+    }
+    /// Recursively sets the type of each `IRNode`
+    fn set_types_recurse(&mut self, curr: NodeId, return_type: Type) -> anyhow::Result<()> {
+        todo!()
     }
     /// Mangles the AST to guarantee that each identifier is globally unique
     ///

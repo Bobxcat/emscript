@@ -9,7 +9,7 @@ use std::{
 use crate::{
     ast::{ASTNode, ASTNodeType},
     interface::Interface,
-    ir::{IRNode, IdentInfo, IRAST},
+    ir::{IRNode, IRNodeType, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::{format_compact, PREFIX_TMP},
     value::{
@@ -516,8 +516,8 @@ fn ir_ast_to_cast_recurse(
         }};
     }
 
-    match &ast[curr_ast].data {
-        IRNode::Literal(val) => branch_function! {
+    match &ast[curr_ast].data.t {
+        IRNodeType::Literal(val) => branch_function! {
             //When a literal has a return var, set `{return_var} = {val};`
             //Otherwise, just return the literal itself
             if let Some(return_var) = return_var {
@@ -531,7 +531,7 @@ fn ir_ast_to_cast_recurse(
             }
         },
 
-        IRNode::VarRef(id) => branch_function! {
+        IRNodeType::VarRef(id) => branch_function! {
             let name = ast[*id].name();
             //When a var ref has a return var, set `{return_var} = {val};`
             //Otherwise, just return the literal itself
@@ -546,7 +546,7 @@ fn ir_ast_to_cast_recurse(
             }
         },
         //Note that `FieldRef` is treated almost exactly like `VarRef`
-        IRNode::FieldRef(field_name) => branch_function! {
+        IRNodeType::FieldRef(field_name) => branch_function! {
             //The expansion for `FieldRef` is as follows:
 
             // let tmp;
@@ -598,7 +598,7 @@ fn ir_ast_to_cast_recurse(
                 single_parent!(CASTNode::FieldRef(field_name.clone()))
             }
         },
-        IRNode::Reference => branch_function! {
+        IRNodeType::Reference => branch_function! {
             //If child is a VarRef:
             //  return_var = &{child};
 
@@ -610,7 +610,7 @@ fn ir_ast_to_cast_recurse(
             let parent = cast.new_node(CASTNode::Ignore);
             let return_var_rhs_name; //Either `_tmp{..}` or `{child_name}`
 
-            if let IRNode::VarRef(child_name) = ast[children[0]].data {
+            if let IRNodeType::VarRef(child_name) = ast[children[0]].data.t {
                 return_var_rhs_name = ast[child_name].name().clone();
             } else {
                 let tmp = generate_tmp();
@@ -674,7 +674,7 @@ fn ir_ast_to_cast_recurse(
             // }
 
         },
-        IRNode::VarDef(id) => branch_function! {
+        IRNodeType::VarDef(id) => branch_function! {
             let (t, name) = ast[*id].name_and_return_type();
             if let None = &return_var {
                 let parent = cast.new_node(CASTNode::Ignore);
@@ -705,7 +705,7 @@ fn ir_ast_to_cast_recurse(
             }
         },
         //Assignments are just variable definitions without the declaration
-        IRNode::Assign(id) => branch_function! {
+        IRNodeType::Assign(id) => branch_function! {
             let name = ast[*id].name();
 
             if let None = &return_var {
@@ -725,7 +725,7 @@ fn ir_ast_to_cast_recurse(
                 ));
             }
         },
-        IRNode::MethodDef(id) => branch_function! {
+        IRNodeType::MethodDef(id) => branch_function! {
             // Gather the method's information
             let (name, inputs, return_type) = {
                 let method_info = &ast[*id];
@@ -783,7 +783,7 @@ fn ir_ast_to_cast_recurse(
                 cast.append_to(parent, return_statement)?;
             }
         },
-        IRNode::MethodCall(id) => branch_function! {
+        IRNodeType::MethodCall(id) => branch_function! {
             // Gather the method's information
             let (name, inputs, ret) = {
                 let method_info = &ast[*id];
@@ -875,7 +875,7 @@ fn ir_ast_to_cast_recurse(
                 }
             }
         },
-        IRNode::IfCondition => branch_function! {
+        IRNodeType::IfCondition => branch_function! {
             let parent = cast.new_node(CASTNode::Ignore);
             let tmp_conditional_t = Type::Bool;
             let tmp_conditional = generate_tmp();
@@ -916,16 +916,16 @@ fn ir_ast_to_cast_recurse(
             }
         },
         //Binary operations
-        IRNode::Add
-        | IRNode::Sub
-        | IRNode::Mul
-        | IRNode::Div
-        | IRNode::Eq
-        | IRNode::Ne
-        | IRNode::Lt
-        | IRNode::Gt
-        | IRNode::Le
-        | IRNode::Ge => branch_function! {
+        IRNodeType::Add
+        | IRNodeType::Sub
+        | IRNodeType::Mul
+        | IRNodeType::Div
+        | IRNodeType::Eq
+        | IRNodeType::Ne
+        | IRNodeType::Lt
+        | IRNodeType::Gt
+        | IRNodeType::Le
+        | IRNodeType::Ge => branch_function! {
                 //Compiles as follows:
 
                 // let tmp_1, tmp_2; <<must(?) have same type
@@ -978,17 +978,18 @@ fn ir_ast_to_cast_recurse(
 
                     //The only difference between all the bin ops is the actual operator in use
                     let op = {
-                        let op = match &ast[curr_ast].data {
-                            IRNode::Add => CASTNode::Add,
-                            IRNode::Sub => CASTNode::Sub,
-                            IRNode::Mul => CASTNode::Mul,
-                            IRNode::Div => CASTNode::Div,
-                            IRNode::Eq => CASTNode::Eq,
-                            IRNode::Ne => CASTNode::Ne,
-                            IRNode::Lt => CASTNode::Lt,
-                            IRNode::Gt => CASTNode::Gt,
-                            IRNode::Le => CASTNode::Le,
-                            IRNode::Ge => CASTNode::Ge,
+                        use IRNodeType::*;
+                        let op = match &ast[curr_ast].data.t {
+                            Add => CASTNode::Add,
+                            Sub => CASTNode::Sub,
+                            Mul => CASTNode::Mul,
+                            Div => CASTNode::Div,
+                            Eq => CASTNode::Eq,
+                            Ne => CASTNode::Ne,
+                            Lt => CASTNode::Lt,
+                            Gt => CASTNode::Gt,
+                            Le => CASTNode::Le,
+                            Ge => CASTNode::Ge,
                             _ => unreachable!(),
                         };
                         cast.new_node(op)
@@ -1009,14 +1010,14 @@ fn ir_ast_to_cast_recurse(
 
         // `return_var` is passed to only the final child. This is handled by `single_parent` by default
         // When the children are method definitions, brackets would be syntatically invalid
-        IRNode::LastValueReturn => branch_function! {match &ast[children[0]].data {
-            IRNode::MethodDef { .. } | IRNode::LastValueReturn => {
+        IRNodeType::LastValueReturn => branch_function! {match &ast[children[0]].data.t {
+            IRNodeType::MethodDef { .. } | IRNodeType::LastValueReturn => {
                 single_parent_no_return!(CASTNode::Ignore)
             }
             _ => single_parent!(CASTNode::Brackets),
         }},
-        IRNode::ValueConsume => branch_function! {match &ast[children[0]].data {
-            IRNode::VarDef { .. } => single_parent!(CASTNode::Ignore),
+        IRNodeType::ValueConsume => branch_function! {match &ast[children[0]].data.t {
+            IRNodeType::VarDef { .. } => single_parent!(CASTNode::Ignore),
             _ => single_parent!(CASTNode::Semicolon),
         }},
     }
