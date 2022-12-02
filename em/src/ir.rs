@@ -293,7 +293,7 @@ impl IRAST {
         // Generate an untyped AST
         let tree =
             Self::from_ast_recurse(ast, ast.find_head().unwrap(), &mut ident_stack, interface)?;
-        let tree = Self {
+        let mut tree = Self {
             tree,
             idents: ident_stack.global_idents,
         };
@@ -328,7 +328,9 @@ impl IRAST {
         /// * `parent_ir_node`
         macro_rules! single_parent {
             ($parent:expr) => {{
-                let parent = ir_tree.new_node($parent);
+                let parent = ast_node_from_type!($parent);
+
+                let parent = ir_tree.new_node(parent);
 
                 single_parent_id!(parent);
             }};
@@ -392,11 +394,22 @@ impl IRAST {
             }};
         }
 
+        macro_rules! ast_node_from_type {
+            ($t:expr) => {
+                IRNode {
+                    t: $t,
+                    ctx: ast[curr].data.context.clone(),
+                    //Types have not been populated yet
+                    return_type: Type::Void,
+                }
+            };
+        }
+
         match &ast[curr].data.t {
             ASTNodeType::VariableDef { name, t } => {
                 //Variables, when declared/defined, do not affect the scope of the rhs of their assignment
                 //So, create a temporary parent variable when running the children and replace it later
-                let tmp = ir_tree.new_node(IRNodeType::Add);
+                let tmp = ir_tree.new_node(ast_node_from_type!(IRNodeType::Add));
                 single_parent_id!(tmp);
 
                 //Find out what the type of this variable is
@@ -416,7 +429,7 @@ impl IRAST {
                     name: name.clone(),
                     t,
                 });
-                ir_tree[tmp].data = IRNodeType::VarDef(ident);
+                ir_tree[tmp].data.t = IRNodeType::VarDef(ident);
             }
             ASTNodeType::MethodDef {
                 name,
@@ -439,7 +452,7 @@ impl IRAST {
                     return_type: type_or_name_to_type!(return_type),
                 });
                 // Finish by recursing with just this node as the parent
-                single_parent!(IRNode::MethodDef(method_id));
+                single_parent!(IRNodeType::MethodDef(method_id));
 
                 // Once finished with recursing on the body, a very important step:
                 // Without this, method parameters would permeate the scope of the method definition
@@ -507,9 +520,47 @@ impl IRAST {
 
         Ok(ir_tree)
     }
-    /// Recursively sets the type of each `IRNode`
+    /// Recursively sets the type of each `IRNode` and returns errors corresponding to type mismatches
     fn set_types_recurse(&mut self, curr: NodeId, return_type: Type) -> anyhow::Result<()> {
-        todo!()
+        use IRNodeType::*;
+
+        let children = self.tree[curr].children.clone();
+
+        match &self.tree[curr].data.t {
+            Literal(v) => {
+                let t = v.t();
+                //Check for coercability if a type mismatch is encountered
+                if return_type != t {
+                    match t {
+                        Type::Void => todo!(),
+                        Type::Bool => todo!(),
+                        Type::Int => todo!(),
+                        Type::Int32 => todo!(),
+                        Type::Custom(id) => todo!(),
+                        //For references, automatically dereference by one level
+                        //(i.e. see if the referenced type is coercable)
+                        Type::Ref(t) => todo!(),
+                    }
+                }
+            }
+            VarRef(_) => todo!(),
+            FieldRef(_) => todo!(),
+            VarDef(_) => todo!(),
+            MethodDef(_) => todo!(),
+            MethodCall(_) => todo!(),
+            Reference => todo!(),
+            IfCondition => todo!(),
+            Assign(_) => todo!(),
+            LastValueReturn => todo!(),
+            ValueConsume => todo!(),
+            Add | Sub | Mul | Div | Eq | Ne | Lt | Gt | Le | Ge => {
+                //Check to make sure both children can both be coerced into the same type (passed from above)
+                self.set_types_recurse(children[0], return_type.clone())?;
+                self.set_types_recurse(children[1], return_type.clone())?;
+            }
+        }
+
+        Ok(())
     }
     /// Mangles the AST to guarantee that each identifier is globally unique
     ///
