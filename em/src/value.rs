@@ -59,7 +59,7 @@ pub mod custom_types {
     }
 }
 
-/// Represents a type, custom or builtin
+/// Represents a type, either custom or builtin
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Void,

@@ -5,6 +5,7 @@ use std::{
     ops::Index,
 };
 
+use crate::verify::VerificationErrorType;
 use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     interface::Interface,
@@ -14,6 +15,7 @@ use crate::{
         custom_types::{custom_types, custom_types_mut, str_to_type},
         CustomTypeId, Type, TypeOrName, Value,
     },
+    verify::VerificationError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -313,11 +315,6 @@ impl IRAST {
         ident_stack: &mut IdentScopeStack,
         interface: &Interface,
     ) -> anyhow::Result<Tree<IRNode>> {
-        // println!(
-        //     "Current node: {:?}\nBacktrace:\n{}",
-        //     curr,
-        //     Backtrace::force_capture()
-        // );
         let children = ast[curr].children.clone();
         let mut ir_tree = Tree::new();
 
@@ -520,47 +517,207 @@ impl IRAST {
 
         Ok(ir_tree)
     }
+
     /// Recursively sets the type of each `IRNode` and returns errors corresponding to type mismatches
-    fn set_types_recurse(&mut self, curr: NodeId, return_type: Type) -> anyhow::Result<()> {
+    ///
+    /// * `curr` - the current node in `self`
+    /// * `return_type` - If Some(_), this is the type which must be returned by `curr`. Otherwise,
+    fn set_types_recurse(
+        &mut self,
+        curr: NodeId,
+        return_type: Option<Type>,
+    ) -> Result<Type, VerificationError> {
         use IRNodeType::*;
 
         let children = self.tree[curr].children.clone();
+
+        /// Returns a type mismatch error
+        ///
+        /// * `expected`
+        /// * `given`
+        macro_rules! type_mismatch {
+            ($expected:expr, $given:expr) => {
+                return Err(VerificationError::new(
+                    self.tree[curr].data.ctx.clone(),
+                    VerificationErrorType::MismatchedTypes {
+                        expected: $expected,
+                        given: $given,
+                    },
+                ))
+            };
+        }
+
+        /// Sets the type of the current node
+        macro_rules! set_type {
+            ($t:expr) => {
+                self.tree[curr].data.return_type = $t;
+            };
+        }
 
         match &self.tree[curr].data.t {
             Literal(v) => {
                 let t = v.t();
                 //Check for coercability if a type mismatch is encountered
                 if return_type != t {
-                    match t {
-                        Type::Void => todo!(),
-                        Type::Bool => todo!(),
-                        Type::Int => todo!(),
-                        Type::Int32 => todo!(),
-                        Type::Custom(id) => todo!(),
-                        //For references, automatically dereference by one level
-                        //(i.e. see if the referenced type is coercable)
-                        Type::Ref(t) => todo!(),
+                    //For now, don't coerce
+                    type_mismatch!(return_type, t);
+                }
+                set_type!(t);
+            }
+            VarRef(id) => {
+                let t = self[*id].return_type();
+                if return_type != t {
+                    //For now, don't coerce
+                    type_mismatch!(return_type, t);
+                }
+
+                set_type!(t);
+            }
+            //For a field ref, just be sad
+            FieldRef(field) => {
+                todo!()
+            }
+            //Assignment returns void but requires child to be the right type
+            VarDef(id) | Assign(id) => {
+                if return_type != Type::Void {
+                    type_mismatch!(return_type, Type::Void);
+                }
+
+                //Make sure lhs type matches rhs
+                let var_t = self[*id].return_type();
+                {
+                    self.set_types_recurse(children[0], var_t)?;
+                }
+
+                set_type!(Type::Void);
+            }
+            MethodCall(id) => match self[*id].clone() {
+                IdentInfo::Method {
+                    params,
+                    return_type: method_t,
+                    ..
+                } => {
+                    //Return type
+                    if let Some(return_type) = return_type {
+                        if return_type != method_t {
+                            type_mismatch!(return_type.clone(), method_t.clone());
+                        }
+                    } else {
+                        panic!("No return type for a `MethodCall`");
+                    }
+                    set_type!(return_type);
+
+                    //Params
+                    for (child_idx, id) in params.into_iter().enumerate() {
+                        let t = self[id].return_type();
+                        self.set_types_recurse(children[child_idx], t)?;
                     }
                 }
+                IdentInfo::ExternMethod {
+                    params,
+                    return_type: method_t,
+                    ..
+                } => {
+                    //Return type
+                    if return_type != method_t {
+                        type_mismatch!(return_type.clone(), method_t.clone());
+                    }
+                    set_type!(return_type);
+
+                    //Params
+                    for (child_idx, (_, t)) in params.into_iter().enumerate() {
+                        self.set_types_recurse(children[child_idx], t)?;
+                    }
+                }
+                _ => unreachable!(),
+            },
+            //TODO:
+            //when returning a `type_mismatch` from this branch, describe the whole given type completely
+            //Currently (same with FieldRef), this returns `&Void` regardless of the actual type referenced
+            Reference => {
+                if let Type::Ref(t) = return_type.clone() {
+                    let t = *t;
+                    //The child must agree with this type
+                    self.set_types_recurse(children[0], t)?;
+                } else {
+                    type_mismatch!(return_type, Type::Ref(Box::new(Type::Void)))
+                }
+                set_type!(return_type);
             }
-            VarRef(_) => todo!(),
-            FieldRef(_) => todo!(),
-            VarDef(_) => todo!(),
-            MethodDef(_) => todo!(),
-            MethodCall(_) => todo!(),
-            Reference => todo!(),
-            IfCondition => todo!(),
-            Assign(_) => todo!(),
-            LastValueReturn => todo!(),
-            ValueConsume => todo!(),
-            Add | Sub | Mul | Div | Eq | Ne | Lt | Gt | Le | Ge => {
+            IfCondition => {
+                if return_type != Type::Void {
+                    todo!(
+                        "Currently, else statements do not exist.
+                    So, if statements cannot return anything other than `Void` at the moment"
+                    );
+                }
+                //Conditional -> bool
+                self.set_types_recurse(children[0], Type::Bool)?;
+
+                //Body -> void
+                self.set_types_recurse(children[1], Type::Void)?;
+
+                set_type!(Type::Void);
+            }
+            //Akin to `Assign` in that the `MethodDef` itself returns Void
+            MethodDef(id) => {
+                let body_t = self[*id].return_type();
+
+                if return_type != Type::Void {
+                    type_mismatch!(return_type, Type::Void);
+                }
+
+                //Make sure child matches `body_t`
+                self.set_types_recurse(children[0], body_t.clone())?;
+                set_type!(body_t);
+            }
+            //Call all children but pass `Void` to all the but that last child
+            LastValueReturn => {
+                let mut children = children;
+
+                //Do the last child first
+                //Pop the last child so the other children can be iterated through later
+                let last = children.pop().unwrap();
+                self.set_types_recurse(last, return_type)?;
+
+                //Iterate through all other children with `Void`
+                for c in children {
+                    self.set_types_recurse(c, Type::Void)?;
+                }
+            }
+            ValueConsume => {
+                if return_type != Type::Void {
+                    type_mismatch!(return_type, Type::Void);
+                }
+
+                self.set_types_recurse(children[0], Type::Void)?;
+
+                set_type!(Type::Void);
+            }
+            //Math ops pass their types downwards
+            Add | Sub | Mul | Div => {
                 //Check to make sure both children can both be coerced into the same type (passed from above)
                 self.set_types_recurse(children[0], return_type.clone())?;
                 self.set_types_recurse(children[1], return_type.clone())?;
+                set_type!(return_type.clone());
+            }
+            //Boolean ops pass uhh...
+            //TODO:
+            //fix boolean ops type checking
+            Eq | Ne | Lt | Gt | Le | Ge => {
+                //Check to make sure both children can both be coerced into the same type (passed from above)
+                let lhs = self.set_types_recurse(children[0], return_type.clone())?;
+                let rhs = self.set_types_recurse(children[1], Some(lhs))?;
+
+                if lhs != rhs {
+                    type_mismatch!(lhs, rhs);
+                }
+
+                set_type!(Type::Bool);
             }
         }
 
-        Ok(())
+        Ok(self.tree[curr].data.return_type.clone())
     }
     /// Mangles the AST to guarantee that each identifier is globally unique
     ///

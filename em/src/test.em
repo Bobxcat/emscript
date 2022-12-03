@@ -1,6 +1,6 @@
 fn hello_again(i32 a) -> i32 {
-    let i32 b = 2 + a;
-    let Foo c = foo_new(1, 2);
+    let i32 b = 2i32 + a;
+    let Foo c = foo_new(1i32, 2i32);
     {
         foo_fib(&c);
         foo_fib(&c);
@@ -12,12 +12,12 @@ fn hello_again(i32 a) -> i32 {
 }
 
 fn fibonacci(i32 n) -> i32 {
-    let i32 a = 0;
-    if n == 1 {
-        a = 1;
+    let i32 a = 0i32;
+    if n == 1i32 {
+        a = 1i32;
     }
-    if n > 1 {
-        a = fibonacci(n-1) + fibonacci(n-2);
+    if n > 1i32 {
+        a = fibonacci(n-1i32) + fibonacci(n-2i32);
     }
 
     a
@@ -25,14 +25,14 @@ fn fibonacci(i32 n) -> i32 {
 
 fn hello() -> i32 {
     //a = -4
-    let i32 a = 1 + 2 - {
-        let i32 b = 7;
+    let i32 a = 1i32 + 2i32 - {
+        let i32 b = 7i32;
         b
     };
     //a = -6
     a = a + hello_again(a);
     //return -3
-    a / 2
+    a / 2i32
 }
 
 //Stack overflow testing:
