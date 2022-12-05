@@ -7,6 +7,10 @@ use crate::{
     value::{Type, Value},
 };
 
+pub(crate) enum TypeRestriction {
+    //
+}
+
 #[derive(Debug, Clone)]
 pub struct VerificationError {
     pub ctx: StringContext,
