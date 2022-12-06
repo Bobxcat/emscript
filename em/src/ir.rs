@@ -5,7 +5,6 @@ use std::{
     ops::Index,
 };
 
-use crate::verify::VerificationErrorType;
 use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     interface::Interface,
@@ -17,6 +16,7 @@ use crate::{
     },
     verify::VerificationError,
 };
+use crate::{value::TypeRestriction, verify::VerificationErrorType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdentID(usize);
@@ -301,7 +301,10 @@ impl IRAST {
         };
 
         // Verify and set expression types
-        tree.set_types_recurse(tree.tree.find_head().unwrap(), Type::Void)?;
+        tree.set_types_recurse(
+            tree.tree.find_head().unwrap(),
+            Some(TypeRestriction::CoercableTo(Type::Void)),
+        )?;
 
         Ok(tree)
     }
@@ -521,11 +524,12 @@ impl IRAST {
     /// Recursively sets the type of each `IRNode` and returns errors corresponding to type mismatches
     ///
     /// * `curr` - the current node in `self`
-    /// * `return_type` - If Some(_), this is the type which must be returned by `curr`. Otherwise,
+    /// * `return_type` - If Some(_), this is the type restrictions which must be followed by the value
+    /// returned by `curr`. Otherwise, any type can be returned
     fn set_types_recurse(
         &mut self,
         curr: NodeId,
-        return_type: Option<Type>,
+        return_type: Option<TypeRestriction>,
     ) -> Result<Type, VerificationError> {
         use IRNodeType::*;
 
@@ -547,6 +551,22 @@ impl IRAST {
             };
         }
 
+        /// Returns a type restriction mismatch error
+        ///
+        /// * `restriction`
+        /// * `t`
+        macro_rules! restriction_mismatch {
+            ($restriction:expr, $t:expr) => {
+                return Err(VerificationError::new(
+                    self.tree[curr].data.ctx.clone(),
+                    VerificationErrorType::RestrictionUnsatisfied {
+                        restriction: $restriction,
+                        t: $t,
+                    },
+                ))
+            };
+        }
+
         /// Sets the type of the current node
         macro_rules! set_type {
             ($t:expr) => {
@@ -557,18 +577,21 @@ impl IRAST {
         match &self.tree[curr].data.t {
             Literal(v) => {
                 let t = v.t();
-                //Check for coercability if a type mismatch is encountered
-                if return_type != t {
-                    //For now, don't coerce
-                    type_mismatch!(return_type, t);
+                //Make sure this type is valid
+                if let Some(return_type) = return_type {
+                    if !return_type.matches(t) {
+                        restriction_mismatch!(return_type, t);
+                    }
                 }
                 set_type!(t);
             }
             VarRef(id) => {
                 let t = self[*id].return_type();
-                if return_type != t {
-                    //For now, don't coerce
-                    type_mismatch!(return_type, t);
+                //Make sure this type is valid
+                if let Some(return_type) = return_type {
+                    if !return_type.matches(t) {
+                        restriction_mismatch!(return_type, t);
+                    }
                 }
 
                 set_type!(t);
@@ -602,15 +625,15 @@ impl IRAST {
                         if return_type != method_t {
                             type_mismatch!(return_type.clone(), method_t.clone());
                         }
+                        set_type!(return_type);
                     } else {
                         panic!("No return type for a `MethodCall`");
                     }
-                    set_type!(return_type);
 
                     //Params
                     for (child_idx, id) in params.into_iter().enumerate() {
                         let t = self[id].return_type();
-                        self.set_types_recurse(children[child_idx], t)?;
+                        self.set_types_recurse(children[child_idx], Some(t))?;
                     }
                 }
                 IdentInfo::ExternMethod {

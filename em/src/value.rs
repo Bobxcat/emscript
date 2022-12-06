@@ -59,8 +59,82 @@ pub mod custom_types {
     }
 }
 
-/// Represents a type, either custom or builtin
+/// Represents a restriction on a type, which can match multiple types or none at all
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TypeRestriction {
+    /// Whether or not a type can be addable on the right hand side with `Type`
+    ///
+    /// Or, whether or not `{Type} + {t}` is possible
+    AddRhs(Type),
+    /// Whether or not a type can be addable on the right hand side with `Type`
+    ///
+    /// Or, whether or not `{Type} - {t}` is possible
+    SubRhs(Type),
+    /// Whether or not a type can be addable on the right hand side with `Type`
+    ///
+    /// Or, whether or not `{Type} * {t}` is possible
+    MulRhs(Type),
+    /// Whether or not a type can be addable on the right hand side with `Type`
+    ///
+    /// Or, whether or not `{Type} / {t}` is possible
+    DivRhs(Type),
+    /// Requires `let {Type} foo = {t}` to be valid
+    CoercableTo(Type),
+}
+
+impl TypeRestriction {
+    /// Returns `true` iff the restrictions on `self` are valid for the given type
+    pub fn matches(&self, t: Type) -> bool {
+        use Type::*;
+        match self {
+            TypeRestriction::AddRhs(rhs)
+            | TypeRestriction::SubRhs(rhs)
+            | TypeRestriction::MulRhs(rhs)
+            | TypeRestriction::DivRhs(rhs) => match (t, rhs) {
+                (Int, Int) => true,
+                (Int, Int32) => true,
+                (Int32, Int) => true,
+                (Int32, Int32) => todo!(),
+                //
+                (Custom(lhs), rhs) => todo!(),
+                (lhs, Custom(rhs)) => todo!(),
+                //
+                (Ref(_), Int) => todo!(),
+                (Int, Ref(_)) => todo!(),
+                (Ref(_), Int32) => todo!(),
+                (Int32, Ref(_)) => todo!(),
+                (Ref(lhs), Ref(rhs)) => todo!(),
+                _ => false,
+            },
+            TypeRestriction::CoercableTo(new_t) => {
+                if *new_t == t {
+                    return true;
+                }
+
+                //All types except abstract types (i.e `Int`, `Float` which are unsized) are
+                // coercable into themselves (handled above),
+                // and generally number types can coerce upwards in size only
+                let prim_coercability: HashMap<Type, &[Type]> =
+                    [(Void, &[][..]), (Bool, &[]), (Int, &[Int32]), (Int32, &[])]
+                        .into_iter()
+                        .collect();
+                if let Some(coercable_types) = prim_coercability.get(new_t) {
+                    coercable_types.contains(new_t)
+                } else {
+                    match t {
+                        Custom(_) => *new_t == t,
+                        //Auto-deref by one level
+                        Ref(t) => *new_t == *t,
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Represents a type, either custom or builtin
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Void,
     Bool,
