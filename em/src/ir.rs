@@ -658,27 +658,48 @@ impl IRAST {
             //when returning a `type_mismatch` from this branch, describe the whole given type completely
             //Currently (same with FieldRef), this returns `&Void` regardless of the actual type referenced
             Reference => {
-                if let Type::Ref(t) = return_type.clone() {
-                    let t = *t;
-                    //The child must agree with this type
-                    self.set_types_recurse(children[0], t)?;
-                } else {
-                    type_mismatch!(return_type, Type::Ref(Box::new(Type::Void)))
+                let child_t = self.set_types_recurse(children[0], return_type)?;
+                if let Some(return_type) = return_type {
+                    if !return_type.matches(child_t) {
+                        restriction_mismatch!(return_type, child_t);
+                    }
+                    // match return_type {
+                    //     TypeRestriction::AddRhs(_)
+                    //     | TypeRestriction::SubRhs(_)
+                    //     | TypeRestriction::MulRhs(_)
+                    //     | TypeRestriction::DivRhs(_) => todo!(),
+                    //     TypeRestriction::CoercableTo(_) => todo!(),
+                    // }
                 }
-                set_type!(return_type);
+                // if let Type::Ref(t) = return_type.clone() {
+                //     let t = *t;
+                //     //The child must agree with this type
+                //     self.set_types_recurse(children[0], t)?;
+                // } else {
+                //     type_mismatch!(return_type, Type::Ref(Box::new(Type::Void)))
+                // }
+                set_type!(Type::Ref(Box::new(child_t)));
             }
             IfCondition => {
-                if return_type != Type::Void {
-                    todo!(
-                        "Currently, else statements do not exist.
-                    So, if statements cannot return anything other than `Void` at the moment"
-                    );
+                if let Some(return_type) = return_type {
+                    if return_type != TypeRestriction::CoercableTo(Type::Void) {
+                        todo!(
+                            "Currently, else statements do not exist.
+                        So, if statement bodies cannot return anything other than `Void` at the moment"
+                        );
+                    }
                 }
                 //Conditional -> bool
-                self.set_types_recurse(children[0], Type::Bool)?;
+                self.set_types_recurse(
+                    children[0],
+                    Some(TypeRestriction::CoercableTo(Type::Bool)),
+                )?;
 
                 //Body -> void
-                self.set_types_recurse(children[1], Type::Void)?;
+                self.set_types_recurse(
+                    children[1],
+                    Some(TypeRestriction::CoercableTo(Type::Void)),
+                )?;
 
                 set_type!(Type::Void);
             }
