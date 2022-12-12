@@ -598,6 +598,7 @@ impl IRAST {
             }
             //For a field ref, just be sad
             FieldRef(field) => {
+                if let Some(return_type) = return_type {}
                 todo!()
             }
             //Assignment returns void but requires child to be the right type
