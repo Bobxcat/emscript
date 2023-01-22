@@ -69,6 +69,8 @@ impl Display for ASTNode {
             }
             MethodCall { name } => format!("Method call: {name}"),
             IfCondition => format!("If statement"),
+            Loop => format!("Loop"),
+            Break => format!("Break"),
         };
         write!(f, "{}", s)
         // write!(f, "[scope:{}]{}", self.scope_depth, s)
@@ -111,6 +113,14 @@ pub enum ASTNodeType {
     ///
     /// `0+` children, 1 for each parameter
     MethodCall { name: String },
+    /// Represents a `loop { .. }` statement
+    ///
+    /// `1` child, the loop body
+    Loop,
+    /// Represents breaking from the innermost loop this token is in
+    ///
+    /// `0` children
+    Break,
     /// Represents an `if` statement
     ///
     /// `2` children, first is conditional (evaluates to bool), second is body

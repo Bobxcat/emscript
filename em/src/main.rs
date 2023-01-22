@@ -1,25 +1,35 @@
 #![feature(ptr_metadata)]
-use std::{fs::File, io::Read};
+use std::{
+    fs::File,
+    io::{stdout, Read, Write},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use em_proc::generate_translation_with_sizes;
 use interface::Interface;
+use ir::IRAST;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wasmer::{Function, Instance, NativeFunc, Store, WasmPtr};
+use wabt::ReadBinaryOptions;
+use wasm::{compile_irast, WasmAST};
+use wasm_opt::{Feature, OptimizationOptions};
+use wasmer::{Exports, Function, ImportObject, Instance, Module, NativeFunc, Store, WasmPtr};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
+    memory::{MemoryIndex, WAllocatorDefault},
     runtime::Runtime,
     token::tokenize,
     traits::{wasm_ptr_as_ref_mut, GetRefFromMem},
+    utils::time_dbg,
     value::{
         custom_types::{custom_types, insert_custom_type, str_to_type},
         CustomType, CustomTypeImpl, Type,
     },
 };
 
-#[macro_use]
-extern crate lazy_static;
 extern crate pomelo;
 extern crate regex_lexer;
 extern crate wasmer;
@@ -33,6 +43,7 @@ mod ast;
 mod c_ast;
 mod interface;
 mod ir;
+mod memory;
 mod parse;
 mod prim_tree;
 mod runtime;
@@ -44,12 +55,51 @@ mod tree;
 mod utils;
 mod value;
 mod verify;
+/// Deals with compiling an IRAST into corresponding WASM code
+mod wasm;
 
 /// Compilation steps:
 /// - Generate an interface, providing methods for all exported methods (probably using `generate_translation_with_sizes!(..)`)
 /// - Compile the API, which checks to make sure that the exports given were complete and correct ///then populates the imports///
 /// - Generate an EmScript AST from the input code
 /// - Translate EmScript AST to IR AST, keeping track of exported methods (NOTE: the name of a method and its wasm-imported name can be different)
+
+fn instance(wasm_path: impl AsRef<Path>, interface: &Interface) -> anyhow::Result<Instance> {
+    //Get a store and (for callbacks) an environment
+    let store = Store::default();
+    let env = WasmEnv::default();
+
+    //Define the WASM environment
+    let import_obj = {
+        let mut import_obj = ImportObject::new();
+
+        //Create the namespace "env" and populate it using `interface`
+        let mut nm = Exports::new();
+
+        for (s, imp) in &interface.wasm_imports {
+            nm.insert(s, imp.f.clone());
+        }
+
+        import_obj.register("env", nm);
+
+        import_obj
+    };
+
+    //Load the WASM
+    let wasm_bytes = {
+        let mut buf = Vec::new();
+        File::open(wasm_path)?.read_to_end(&mut buf)?;
+        buf
+    };
+
+    //Define WASM runtime
+    let module = Module::new(&store, &wasm_bytes)?;
+
+    //Finally, create the instance itself
+    let instance = Instance::new(&module, &import_obj)?;
+
+    Ok(instance)
+}
 
 fn compile_text(
     raw: &str,
@@ -72,20 +122,112 @@ fn compile_text(
     // panic!();
 
     //At this point, a runtime needs to be created to proceed
-    let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
+    // let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
 
-    //Compile the AST to rust
+    //Compile the AST to wasm
 
-    runtime.setup_target_dir_relative("./em_target/").unwrap();
+    // runtime.setup_target_dir_relative("./em_target/").unwrap();
 
-    let _c_dir = runtime.compile_to_c(&mut ast).unwrap();
+    let mut ir_ast = IRAST::from_ast(&ast, &interface)?;
+    ir_ast.mangle(vec!["foo"].iter().map(|s| *s).collect());
 
-    let wasm_path = runtime.compile_c().unwrap();
+    let wasm_ast = compile_irast(&ir_ast)?;
 
-    println!("Loading {}\n", wasm_path.display());
-    let loaded_runtime = runtime.load_wasm(wasm_path, store)?;
+    println!("Generated wasm:\n{wasm_ast:?}");
 
-    Ok(loaded_runtime)
+    let wasm_txt = &format!("{wasm_ast}");
+
+    let wasm_nofilter = &PathBuf::from_str("em_target/wasm/main_nofilter.wat")?;
+    File::create(&wasm_nofilter)?.write_all(wasm_txt.as_bytes())?;
+    //Turn the WASM text into a `.wasm` binary, which is smaller and such
+    //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
+    let wasm = &wabt::wat2wasm(wasm_txt)?[..];
+
+    //Verify the wasm binary with wabt
+    {
+        let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
+        module.validate()?;
+    }
+
+    let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
+    File::create(&wasm_path_preopt)?.write_all(wasm)?;
+
+    let wasm_path_preopt_txt = &PathBuf::from_str("em_target/wasm/main_preopt.wat")?;
+    File::create(wasm_path_preopt_txt)?.write_all(wabt::wasm2wat(wasm)?.as_bytes())?;
+
+    let wasm_path = &PathBuf::from_str("em_target/wasm/main.wasm")?;
+
+    println!("=====Running unoptimized=====");
+    const ARGS: i32 = 1000000000;
+    //Run unoptimized
+    {
+        let instance = instance(wasm_path_preopt, &interface)?;
+
+        let foo: NativeFunc<i32, i32> = instance.exports.get_native_function("foo")?;
+
+        fn foo0(n: i32) -> i32 {
+            let mut a = 0;
+            let mut b = 1;
+
+            let mut i = 1;
+
+            loop {
+                if i == n {
+                    break;
+                }
+                let t = b;
+                b = a + b;
+                a = t;
+
+                i += 1;
+            }
+
+            b
+        }
+
+        dbg!(time_dbg(|| foo0(ARGS)));
+
+        println!();
+
+        // dbg!(foo.call(1)?);
+        // dbg!(foo.call(2)?);
+
+        // dbg!(foo.call(4)?);
+        dbg!(time_dbg(|| foo.call(ARGS).unwrap()));
+    }
+
+    // Currently, the WASM is *already* being optimized, so this part is not useful
+    // Or, at the very least, the performance gain so far has been either negligable or negative
+    println!("\n\n=====Running optimized=====");
+
+    OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path)?;
+
+    let wasm_path_txt = &PathBuf::from_str("em_target/wasm/main.wat")?;
+    File::create(wasm_path_txt)?.write_all(
+        wabt::wasm2wat(
+            File::open(wasm_path_preopt)?
+                .bytes()
+                .collect::<Result<Vec<_>, _>>()?,
+        )?
+        .as_bytes(),
+    )?;
+
+    //Run optimized
+    {
+        let instance = instance(wasm_path, &interface)?;
+
+        let foo: NativeFunc<i32, i32> = instance.exports.get_native_function("foo")?;
+
+        // dbg!(foo.call(1)?);
+        // dbg!(foo.call(2)?);
+
+        // dbg!(foo.call(4)?);
+        // dbg!(foo.call(40)?);
+        dbg!(time_dbg(|| foo.call(ARGS).unwrap()));
+    }
+
+    println!("\n\nfinished");
+    loop {}
 }
 
 //TODO:
@@ -136,26 +278,21 @@ fn main() {
 }
 
 fn start() -> anyhow::Result<()> {
+    println!(
+        "Memory index is: {} bytes",
+        std::mem::size_of::<MemoryIndex>()
+    );
     use runtime::OptLevel::*;
+
+    let alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
     let store = Store::default();
     let env = WasmEnv::default();
 
     let interface = {
         use StdImport::*;
-        let mut i = Interface::new_with_std(vec![StdOut].into_iter().collect(), &store, &env);
-
-        //Custom Types
-
-        // //`String`
-        // {
-        //     let t = CustomType {
-        //         name: "String".into(),
-        //         fields: vec![("start".into(), WasmPtr<u8>)].collect(),
-        //         implementation: todo!(),
-        //     };
-        //     insert_custom_type(t);
-        // }
+        let mut i =
+            Interface::new_with_std(alloc, vec![StdOut].into_iter().collect(), &store, &env);
 
         //`Foo`
         {
@@ -173,7 +310,7 @@ fn start() -> anyhow::Result<()> {
         //Methods
 
         //`Foo`
-        {
+        if false {
             #[repr(C)]
             struct Foo {
                 a: i32,

@@ -5,6 +5,7 @@ use std::{
     hash::Hash,
     ops::{Index, IndexMut},
     rc::Rc,
+    time::{Duration, SystemTime},
 };
 
 use bimap::{BiHashMap, BiMap};
@@ -48,6 +49,16 @@ pub fn format_compact(mut n: u128) -> String {
     // and pre-allocating all the memory, setting the values in reverse order
     v.reverse();
     String::from_utf8(v).unwrap()
+}
+
+#[allow(unused)]
+pub fn time_dbg<T>(f: impl FnOnce() -> T) -> T {
+    let start = SystemTime::now();
+    let ret = (f)();
+    let t = SystemTime::now().duration_since(start).unwrap();
+    dbg!(t);
+
+    ret
 }
 
 /// A HashMap which stores multiple keys of possibly different types for each value

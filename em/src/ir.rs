@@ -60,6 +60,11 @@ pub enum IRNodeType {
     /// `2` children, first is conditional (evaluates to bool), second is body
     IfCondition,
 
+    /// `1` child
+    Loop,
+    /// `0` children
+    Break,
+
     //Assign
     /// Assignment of the given variable to the value given by this node's child
     ///
@@ -303,7 +308,7 @@ impl IRAST {
         // Verify and set expression types
         tree.set_types_recurse(
             tree.tree.find_head().unwrap(),
-            Some(TypeRestriction::CoercableTo(Type::Void)),
+            None, // Some(TypeRestriction::CoercableTo(Type::Void)),
         )?;
 
         Ok(tree)
@@ -502,6 +507,8 @@ impl IRAST {
             // Trivial transformations
             ASTNodeType::Literal { val } => single_parent!(IRNodeType::Literal(val.clone())),
             ASTNodeType::IfCondition => single_parent!(IRNodeType::IfCondition),
+            ASTNodeType::Loop => single_parent!(IRNodeType::Loop),
+            ASTNodeType::Break => single_parent!(IRNodeType::Break),
             ASTNodeType::Add => single_parent!(IRNodeType::Add),
             ASTNodeType::Sub => single_parent!(IRNodeType::Sub),
             ASTNodeType::Mul => single_parent!(IRNodeType::Mul),
@@ -524,12 +531,14 @@ impl IRAST {
     /// Recursively sets the type of each `IRNode` and returns errors corresponding to type mismatches
     ///
     /// * `curr` - the current node in `self`
-    /// * `return_type` - If Some(_), this is the type restrictions which must be followed by the value
-    /// returned by `curr`. Otherwise, any type can be returned
+    /// * `return_type` - the type which must be returned by `self`. If `none`, no guarantee on return type is given
+    ///
+    /// TODO: Use Hindley-Miller Type Inferencing
     fn set_types_recurse(
         &mut self,
         curr: NodeId,
-        return_type: Option<TypeRestriction>,
+        return_type: Option<Type>,
+        // return_type: Option<TypeRestriction>,
     ) -> Result<Type, VerificationError> {
         use IRNodeType::*;
 
@@ -551,21 +560,21 @@ impl IRAST {
             };
         }
 
-        /// Returns a type restriction mismatch error
-        ///
-        /// * `restriction`
-        /// * `t`
-        macro_rules! restriction_mismatch {
-            ($restriction:expr, $t:expr) => {
-                return Err(VerificationError::new(
-                    self.tree[curr].data.ctx.clone(),
-                    VerificationErrorType::RestrictionUnsatisfied {
-                        restriction: $restriction,
-                        t: $t,
-                    },
-                ))
-            };
-        }
+        // /// Returns a type restriction mismatch error
+        // ///
+        // /// * `restriction`
+        // /// * `t`
+        // macro_rules! restriction_mismatch {
+        //     ($restriction:expr, $t:expr) => {
+        //         return Err(VerificationError::new(
+        //             self.tree[curr].data.ctx.clone(),
+        //             VerificationErrorType::RestrictionUnsatisfied {
+        //                 restriction: $restriction,
+        //                 t: $t,
+        //             },
+        //         ))
+        //     };
+        // }
 
         /// Sets the type of the current node
         macro_rules! set_type {
@@ -578,9 +587,10 @@ impl IRAST {
             Literal(v) => {
                 let t = v.t();
                 //Make sure this type is valid
+                // if let Some(return_type) = return_type {
                 if let Some(return_type) = return_type {
-                    if !return_type.matches(t) {
-                        restriction_mismatch!(return_type, t);
+                    if return_type != t {
+                        type_mismatch!(return_type, t);
                     }
                 }
                 set_type!(t);
@@ -588,9 +598,11 @@ impl IRAST {
             VarRef(id) => {
                 let t = self[*id].return_type();
                 //Make sure this type is valid
+                // if let Some(return_type) = return_type {
+
                 if let Some(return_type) = return_type {
-                    if !return_type.matches(t) {
-                        restriction_mismatch!(return_type, t);
+                    if return_type != t {
+                        type_mismatch!(return_type, t);
                     }
                 }
 
@@ -598,19 +610,22 @@ impl IRAST {
             }
             //For a field ref, just be sad
             FieldRef(field) => {
-                if let Some(return_type) = return_type {}
                 todo!()
+                // if let Some(return_type) = return_type {}
+                // todo!()
             }
             //Assignment returns void but requires child to be the right type
             VarDef(id) | Assign(id) => {
-                if return_type != Type::Void {
-                    type_mismatch!(return_type, Type::Void);
+                if let Some(return_type) = return_type {
+                    if return_type != Type::Void {
+                        type_mismatch!(return_type, Type::Void);
+                    }
                 }
 
                 //Make sure lhs type matches rhs
                 let var_t = self[*id].return_type();
                 {
-                    self.set_types_recurse(children[0], var_t)?;
+                    self.set_types_recurse(children[0], Some(var_t))?;
                 }
 
                 set_type!(Type::Void);
@@ -626,10 +641,12 @@ impl IRAST {
                         if return_type != method_t {
                             type_mismatch!(return_type.clone(), method_t.clone());
                         }
-                        set_type!(return_type);
-                    } else {
-                        panic!("No return type for a `MethodCall`");
                     }
+                    set_type!(method_t);
+
+                    // } else {
+                    //     panic!("No return type for a `MethodCall`");
+                    // }
 
                     //Params
                     for (child_idx, id) in params.into_iter().enumerate() {
@@ -643,14 +660,16 @@ impl IRAST {
                     ..
                 } => {
                     //Return type
-                    if return_type != method_t {
-                        type_mismatch!(return_type.clone(), method_t.clone());
+                    if let Some(return_type) = return_type {
+                        if return_type != method_t {
+                            type_mismatch!(return_type.clone(), method_t.clone());
+                        }
                     }
-                    set_type!(return_type);
+                    set_type!(method_t);
 
                     //Params
                     for (child_idx, (_, t)) in params.into_iter().enumerate() {
-                        self.set_types_recurse(children[child_idx], t)?;
+                        self.set_types_recurse(children[child_idx], Some(t))?;
                     }
                 }
                 _ => unreachable!(),
@@ -659,48 +678,70 @@ impl IRAST {
             //when returning a `type_mismatch` from this branch, describe the whole given type completely
             //Currently (same with FieldRef), this returns `&Void` regardless of the actual type referenced
             Reference => {
-                let child_t = self.set_types_recurse(children[0], return_type)?;
-                if let Some(return_type) = return_type {
-                    if !return_type.matches(child_t) {
-                        restriction_mismatch!(return_type, child_t);
+                let child_t = match return_type {
+                    Some(Type::Ref(t)) => {
+                        let child_t = self.set_types_recurse(children[0], Some(*t.clone()))?;
+
+                        if *t != child_t {
+                            type_mismatch!(*t, child_t);
+                        }
+
+                        child_t
                     }
-                    // match return_type {
-                    //     TypeRestriction::AddRhs(_)
-                    //     | TypeRestriction::SubRhs(_)
-                    //     | TypeRestriction::MulRhs(_)
-                    //     | TypeRestriction::DivRhs(_) => todo!(),
-                    //     TypeRestriction::CoercableTo(_) => todo!(),
-                    // }
-                }
-                // if let Type::Ref(t) = return_type.clone() {
-                //     let t = *t;
-                //     //The child must agree with this type
-                //     self.set_types_recurse(children[0], t)?;
-                // } else {
-                //     type_mismatch!(return_type, Type::Ref(Box::new(Type::Void)))
-                // }
+                    None => self.set_types_recurse(children[0], None)?,
+                    t => type_mismatch!(t.unwrap(), Type::Ref(Box::new(Type::Void))),
+                };
+
                 set_type!(Type::Ref(Box::new(child_t)));
             }
             IfCondition => {
                 if let Some(return_type) = return_type {
-                    if return_type != TypeRestriction::CoercableTo(Type::Void) {
+                    if return_type != Type::Void {
                         todo!(
                             "Currently, else statements do not exist.
-                        So, if statement bodies cannot return anything other than `Void` at the moment"
+                    So, if statement bodies cannot return anything other than `Void` at the moment"
                         );
                     }
                 }
+                // if let Some(return_type) = return_type {
+                //     if return_type != TypeRestriction::CoercableTo(Type::Void) {
+                //         todo!(
+                //             "Currently, else statements do not exist.
+                //         So, if statement bodies cannot return anything other than `Void` at the moment"
+                //         );
+                //     }
+                // }
                 //Conditional -> bool
                 self.set_types_recurse(
                     children[0],
-                    Some(TypeRestriction::CoercableTo(Type::Bool)),
+                    Some(Type::Bool), // Some(TypeRestriction::CoercableTo(Type::Bool)),
                 )?;
 
                 //Body -> void
                 self.set_types_recurse(
                     children[1],
-                    Some(TypeRestriction::CoercableTo(Type::Void)),
+                    Some(Type::Void), // Some(TypeRestriction::CoercableTo(Type::Void)),
                 )?;
+
+                set_type!(Type::Void);
+            }
+            Loop => {
+                if let Some(ret) = return_type.clone() {
+                    if ret != Type::Void {
+                        type_mismatch!(ret, Type::Void);
+                    }
+                }
+
+                let child_t = self.set_types_recurse(children[0], Some(Type::Void))?;
+
+                set_type!(Type::Void);
+            }
+            Break => {
+                if let Some(ret) = return_type.clone() {
+                    if ret != Type::Void {
+                        type_mismatch!(ret, Type::Void);
+                    }
+                }
 
                 set_type!(Type::Void);
             }
@@ -708,12 +749,14 @@ impl IRAST {
             MethodDef(id) => {
                 let body_t = self[*id].return_type();
 
-                if return_type != Type::Void {
-                    type_mismatch!(return_type, Type::Void);
+                if let Some(return_type) = return_type {
+                    if return_type != Type::Void {
+                        type_mismatch!(return_type, Type::Void);
+                    }
                 }
 
                 //Make sure child matches `body_t`
-                self.set_types_recurse(children[0], body_t.clone())?;
+                self.set_types_recurse(children[0], Some(body_t.clone()))?;
                 set_type!(body_t);
             }
             //Call all children but pass `Void` to all the but that last child
@@ -727,15 +770,16 @@ impl IRAST {
 
                 //Iterate through all other children with `Void`
                 for c in children {
-                    self.set_types_recurse(c, Type::Void)?;
+                    self.set_types_recurse(c, Some(Type::Void))?;
                 }
             }
             ValueConsume => {
-                if return_type != Type::Void {
-                    type_mismatch!(return_type, Type::Void);
+                if let Some(return_type) = return_type {
+                    if return_type != Type::Void {
+                        type_mismatch!(return_type, Type::Void);
+                    }
                 }
-
-                self.set_types_recurse(children[0], Type::Void)?;
+                self.set_types_recurse(children[0], Some(Type::Void))?;
 
                 set_type!(Type::Void);
             }
@@ -744,15 +788,16 @@ impl IRAST {
                 //Check to make sure both children can both be coerced into the same type (passed from above)
                 self.set_types_recurse(children[0], return_type.clone())?;
                 self.set_types_recurse(children[1], return_type.clone())?;
-                set_type!(return_type.clone());
+                set_type!(return_type.clone().unwrap_or(Type::Void));
             }
             //Boolean ops pass uhh...
             //TODO:
             //fix boolean ops type checking
             Eq | Ne | Lt | Gt | Le | Ge => {
-                //Check to make sure both children can both be coerced into the same type (passed from above)
-                let lhs = self.set_types_recurse(children[0], return_type.clone())?;
-                let rhs = self.set_types_recurse(children[1], Some(lhs))?;
+                //Check to make sure both children can both be coerced into the same type
+                //  (*not* passed from above, since `return_type = bool` is guaranteed)
+                let lhs = self.set_types_recurse(children[0], None)?;
+                let rhs = self.set_types_recurse(children[1], Some(lhs.clone()))?;
 
                 if lhs != rhs {
                     type_mismatch!(lhs, rhs);

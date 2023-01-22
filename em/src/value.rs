@@ -5,19 +5,24 @@ use std::{
     rc::Rc,
 };
 
-use crate::ast::ASTNodeType;
+use crate::{ast::ASTNodeType, memory::MemoryIndex};
 
 pub mod custom_types {
     use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    use once_cell::sync::Lazy;
 
     use crate::{utils::MultiMap, value::CustomTypeId};
 
     use super::{CustomType, Type, TypeOrName};
 
-    lazy_static! {
-        static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
-            RwLock::new(MultiMap::default());
-    }
+    // lazy_static! {
+    //     static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
+    //         RwLock::new(MultiMap::default());
+    // }
+
+    static CUSTOM_TYPES: Lazy<RwLock<MultiMap<CustomTypeId, String, CustomType>>> =
+        Lazy::new(|| RwLock::new(MultiMap::default()));
 
     pub fn custom_types() -> RwLockReadGuard<'static, MultiMap<CustomTypeId, String, CustomType>> {
         CUSTOM_TYPES.read().expect("Failed to lock `CUSTOM_TYPES`")
@@ -140,11 +145,24 @@ pub enum Type {
     Bool,
     Int,
     Int32,
+    Int64,
     /// A custom type. This is anything represented by a struct or enum.
     /// This includes things like `String`, which are not user-defined
     Custom(CustomTypeId),
     /// `& {T}`
     Ref(Box<Type>),
+}
+
+impl Type {
+    /// Returns the type representing the width of wasm pointers into memory
+    pub fn ptr_type() -> Self {
+        let ptr_id = std::any::TypeId::of::<MemoryIndex>();
+        if ptr_id == std::any::TypeId::of::<u32>() {
+            Self::Int32
+        } else {
+            Self::Int64
+        }
+    }
 }
 
 /// Represents a custom type
@@ -276,6 +294,7 @@ impl Display for Type {
                 Type::Bool => "bool".into(),
                 Type::Int => "{integer}".into(),
                 Type::Int32 => "i32".into(),
+                Type::Int64 => "i64".into(),
                 Type::Custom(id) => format!("CustomType[{id}]"),
                 Type::Ref(t) => format!("&{t}"),
             }

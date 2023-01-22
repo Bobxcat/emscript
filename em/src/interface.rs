@@ -9,6 +9,7 @@ use std::{
 use crate::{
     ast::StringContext,
     interface::parse_interface::Token,
+    memory::{MemoryIndex, WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
     token::tokenize,
     traits::GetRefFromMem,
     utils::MultiMap,
@@ -16,17 +17,16 @@ use crate::{
 };
 
 use em_proc::generate_translation_with_sizes;
+use once_cell::sync::Lazy;
 use pomelo::pomelo;
 use wasmer::{Function, LazyInit, Memory, Store, WasmerEnv};
 
 use self::parse_interface::Parser;
 
-lazy_static! {
-    static ref PARSE_DATA: Mutex<ParseData> = {
-        let p = ParseData::default();
-        Mutex::new(p)
-    };
-}
+static PARSE_DATA: Lazy<Mutex<ParseData>> = Lazy::new(|| {
+    let p = ParseData::default();
+    Mutex::new(p)
+});
 
 //1) parse and find all method declarations (along with info)
 //2) runtime fills out callbacks for exports before compiling
@@ -60,6 +60,7 @@ impl ParseData {
             })
             .collect::<Option<Vec<_>>>()?;
         let ret = str_to_type(&ret)?;
+
         self.method_decs.insert(
             name.to_string(),
             InterfaceMethodDec {
@@ -226,12 +227,95 @@ pub struct Interface {
 }
 
 impl Interface {
-    #[allow(unused)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub fn new_with_std(std_imps: HashSet<StdImport>, store: &Store, env: &WasmEnv) -> Self {
+    pub fn new(
+        allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
+        store: &Store,
+        env: &WasmEnv,
+    ) -> Self {
         let mut interface = Self::default();
+
+        let ptr_type = Type::ptr_type();
+
+        //`malloc`
+        {
+            let allocator = allocator.clone();
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: MEM_ALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: ptr_type.clone(),
+                f: Function::new_native_with_env(
+                    &store,
+                    env.clone(),
+                    move |env: &WasmEnv, size: MemoryIndex, align: MemoryIndex| -> MemoryIndex {
+                        let mut allocator = allocator.lock().expect("malloc failed to lock");
+                        allocator.malloc(env, size, align)
+                    },
+                ),
+            };
+            interface.insert(imp);
+        }
+
+        //`mrealloc`
+        {
+            let allocator = allocator.clone();
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: MEM_REALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: ptr_type.clone(),
+                f: Function::new_native_with_env(
+                    &store,
+                    env.clone(),
+                    move |env: &WasmEnv, loc: MemoryIndex, new_size: MemoryIndex| -> MemoryIndex {
+                        let mut allocator = allocator.lock().expect("mrealloc failed to lock");
+                        allocator.mrealloc(env, loc, new_size)
+                    },
+                ),
+            };
+            interface.insert(imp);
+        }
+
+        //`mfree`
+        {
+            let allocator = allocator.clone();
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: MEM_REALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: Type::Void,
+                f: Function::new_native_with_env(
+                    &store,
+                    env.clone(),
+                    move |env: &WasmEnv, loc: MemoryIndex, size: MemoryIndex| {
+                        let mut allocator = allocator.lock().expect("mrealloc failed to lock");
+                        allocator.mfree(env, loc, size)
+                    },
+                ),
+            };
+            interface.insert(imp);
+        }
+
+        // MethodImport {
+        //     mod_name: $env.to_string(),
+        //     method_name: $name.to_string(),
+        //     params: $params,
+        //     ret: $ret,
+        //     f: Function::new_native_with_env(
+        //         &store,
+        //         env.clone(),
+        //         generate_translation_with_sizes!($($translation)*),
+        //     ),
+        // }
+        interface
+    }
+    pub fn new_with_std(
+        allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
+        std_imps: HashSet<StdImport>,
+        store: &Store,
+        env: &WasmEnv,
+    ) -> Self {
+        let mut interface = Self::new(allocator, store, env);
         interface.wasm_imports.reserve(std_imps.len());
 
         /// Inserts some number of method imports into the interface

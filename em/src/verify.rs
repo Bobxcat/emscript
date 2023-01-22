@@ -25,9 +25,9 @@ impl Display for VerificationError {
             VerificationErrorType::MismatchedTypes { expected, given } => {
                 format!("Mismatched types. Expected `{expected}`, received `{given}`")
             }
-            VerificationErrorType::RestrictionUnsatisfied { restriction, t } => {
-                format!("Type restriction unsatisfied. Required `{restriction:#?}`, received `{t}`")
-            }
+            // VerificationErrorType::RestrictionUnsatisfied { restriction, t } => {
+            //     format!("Type restriction unsatisfied. Required `{restriction:#?}`, received `{t}`")
+            // }
             VerificationErrorType::UndefinedVar { name } => {
                 format!("Variable referenced which was not yet defined: `{name}`")
             }
@@ -46,10 +46,10 @@ pub enum VerificationErrorType {
         expected: Type,
         given: Type,
     },
-    RestrictionUnsatisfied {
-        restriction: TypeRestriction,
-        t: Type,
-    },
+    // RestrictionUnsatisfied {
+    //     restriction: TypeRestriction,
+    //     t: Type,
+    // },
     UndefinedVar {
         name: String,
     },

@@ -8,6 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
+use wasm_opt::OptimizationOptions;
 use wasmer::{
     imports, Engine, Exports, Function, ImportObject, Instance, Memory, MemoryType, Module, Store,
     Universal,
@@ -15,7 +16,7 @@ use wasmer::{
 
 use crate::{
     ast::{ASTNode, StringContext},
-    c_ast::{ast_to_cast, cast_to_string},
+    // c_ast::{ast_to_cast, cast_to_string},
     interface::Interface,
     tree::{NodeId, Tree},
     value::Type,
@@ -202,36 +203,36 @@ impl Runtime {
         Ok(())
     }
 
-    /// Compiles the given `ast` into a c project. The root of that project is returned (which contains a `main.c`)
-    ///
-    /// Note that the `ast` will likely be mutated
-    pub fn compile_to_c(&self, ast: &mut Tree<ASTNode>) -> Result<PathBuf, anyhow::Error> {
-        /// A macro which lets you create files more easily (from the root of the generated proj)
-        macro_rules! create_file_root {
-            ($path:expr) => {
-                File::create(self.c_dir.join($path))?
-            };
-            ($path:expr, $text:expr) => {{
-                let mut f = File::create(self.c_dir.join($path))?;
-                f.write_all($text)?;
-                f
-            }};
-        }
+    // /// Compiles the given `ast` into a c project. The root of that project is returned (which contains a `main.c`)
+    // ///
+    // /// Note that the `ast` will likely be mutated
+    // pub fn compile_to_c(&self, ast: &mut Tree<ASTNode>) -> Result<PathBuf, anyhow::Error> {
+    //     /// A macro which lets you create files more easily (from the root of the generated proj)
+    //     macro_rules! create_file_root {
+    //         ($path:expr) => {
+    //             File::create(self.c_dir.join($path))?
+    //         };
+    //         ($path:expr, $text:expr) => {{
+    //             let mut f = File::create(self.c_dir.join($path))?;
+    //             f.write_all($text)?;
+    //             f
+    //         }};
+    //     }
 
-        //main.c
-        {
-            let main_cast = ast_to_cast(ast, &self.interface)?;
+    //     //main.c
+    //     {
+    //         let main_cast = ast_to_cast(ast, &self.interface)?;
 
-            if self.cfg.print_cast {
-                println!("==CAST==\n{}\n========", main_cast);
-            }
+    //         if self.cfg.print_cast {
+    //             println!("==CAST==\n{}\n========", main_cast);
+    //         }
 
-            let main_txt = format!("{}", cast_to_string(&main_cast));
-            create_file_root!("main.c", main_txt.as_bytes());
-        }
+    //         let main_txt = format!("{}", cast_to_string(&main_cast));
+    //         create_file_root!("main.c", main_txt.as_bytes());
+    //     }
 
-        Ok(self.c_dir.to_path_buf())
-    }
+    //     Ok(self.c_dir.to_path_buf())
+    // }
 
     pub fn compile_c(&self) -> Result<PathBuf, anyhow::Error> {
         //Call 'clang'
@@ -280,11 +281,18 @@ impl Runtime {
             clang_handle.wait()?;
         }
 
-        //Clone the generated `c/main.wasm` file into `wasm/main.wasm`
+        //Optimize `c/main.wasm` and write the optimized wasm to `wasm/main.wasm`
         {
             let generated_wasm_path = self.c_dir.join(format!("main.wasm"));
             let wasm_new_path = self.wasm_dir.join(format!("main.wasm"));
-            std::fs::copy(&generated_wasm_path, &wasm_new_path)?;
+            // std::fs::copy(&generated_wasm_path, &wasm_new_path)?;
+            let opt = match self.cfg.opt_level {
+                OptLevel::NoOpt => OptimizationOptions::new_opt_level_0(),
+                OptLevel::Debug => OptimizationOptions::new_opt_level_1(),
+                OptLevel::Release => OptimizationOptions::new_opt_level_4(),
+            };
+
+            opt.run(generated_wasm_path, wasm_new_path.clone()).unwrap();
 
             Ok(wasm_new_path)
         }

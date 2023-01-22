@@ -107,10 +107,19 @@ pomelo! {
     expr ::= MethodCallStart((ctx, s)) RParen { new_node(MethodCall { name: s }, ctx, vec![]) };
     expr ::= MethodCallStart((ctx, s)) expr_list(inputs) RParen { new_node(MethodCall { name: s }, ctx, inputs) };
 
-    //Conditionals
+    //Control Flow and Conditionals
     expr ::= If(ctx) expr(condition) LBracket expr_seq(L) RBracket {
         let body = list_to_last_value_return(L);
         new_node(IfCondition, ctx, vec![condition, body])
+    }
+
+    expr ::= Loop(ctx) LBracket expr_seq(L) RBracket {
+        let body = list_to_last_value_return(L);
+        new_node(Loop, ctx, vec![body])
+    }
+
+    expr ::= Break(ctx) {
+        new_node(Break, ctx, vec![])
     }
 
     //Adding scopes and enclosing with brackets

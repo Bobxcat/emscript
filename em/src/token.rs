@@ -1,5 +1,6 @@
 use std::{ops::Range, str::FromStr};
 
+use once_cell::sync::Lazy;
 use regex_lexer::{Lexer, LexerBuilder};
 
 use crate::{ast::StringContext, parse::Token, value::Type};
@@ -85,6 +86,8 @@ impl TokenType {
                     "false" => Token::Bool((ctx, false)),
                     //Other keywords
                     "let" => Token::Let(ctx),
+                    "loop" => Token::Loop(ctx),
+                    "break" => Token::Break(ctx),
                     "fn" => Token::Fn(ctx),
                     "if" => Token::If(ctx),
                     // "return" => Token::Return(ctx),
@@ -126,67 +129,58 @@ impl TokenType {
     }
 }
 
-lazy_static! {
-    static ref LEXER: Lexer<TokenType> = {
-        use TokenType::*;
-        //Define the regex for all tokens
-        //Note that conflicts are resolved by the latest getting priority
-        LexerBuilder::new()
-            //Basic type literals
-            .token(r"[-+]?[0-9]+", Int)
-            .token(r"[-+]?[0-9]+i32", Int32)
-            //.token(r"[-+]?[0-9]+\.[0-9]*", Float)
-
-            //Identifiers
-            .token(r"[[:alpha:]_][[:alnum:]_]*", Ident)
-
-            //Operators and such
-            .token(r"=", Assign)
-            //Arithmetic
-            .token(r"\+", Add)
-            .token(r"-", Sub)
-            .token(r"\*", Mul)
-            .token(r"/", Div)
-            //Cmp
-            .token(r"==", Eq)
-            .token(r"!=", Ne)
-            .token(r"<", Lt)
-            .token(r">", Gt)
-            .token(r"<=", Le)
-            .token(r">=", Ge)
-            //Misc
-            .token(r"\(", LParen)
-            .token(r"\)", RParen)
-            .token(r"[;]", Semicolon)
-            .token(r"[{]", LBracket)
-            .token(r"[}]", RBracket)
-            .token(r",", Comma)
-            .token(r"\.", Period)
-            .token(r"\&", Ampersand)
-
-            //Keywords
-            .token(r"->", Arrow)
-
-            //Strings
-            .token(r#"".*""#, String)
-            //Comments
-            .ignore(r"//.*")
-
-            //Finishing up
-            .ignore(r"\s+")
-            .build()
-            .expect("Lexer failed to build")
-    };
-}
+static LEXER: Lazy<Lexer<TokenType>> = Lazy::new(|| {
+    use TokenType::*;
+    //Define the regex for all tokens
+    //Note that conflicts are resolved by the latest getting priority
+    LexerBuilder::new()
+        //Basic type literals
+        .token(r"[-+]?[0-9]+", Int)
+        .token(r"[-+]?[0-9]+i32", Int32)
+        //.token(r"[-+]?[0-9]+\.[0-9]*", Float)
+        //Identifiers
+        .token(r"[[:alpha:]_][[:alnum:]_]*", Ident)
+        //Operators and such
+        .token(r"=", Assign)
+        //Arithmetic
+        .token(r"\+", Add)
+        .token(r"-", Sub)
+        .token(r"\*", Mul)
+        .token(r"/", Div)
+        //Cmp
+        .token(r"==", Eq)
+        .token(r"!=", Ne)
+        .token(r"<", Lt)
+        .token(r">", Gt)
+        .token(r"<=", Le)
+        .token(r">=", Ge)
+        //Misc
+        .token(r"\(", LParen)
+        .token(r"\)", RParen)
+        .token(r"[;]", Semicolon)
+        .token(r"[{]", LBracket)
+        .token(r"[}]", RBracket)
+        .token(r",", Comma)
+        .token(r"\.", Period)
+        .token(r"\&", Ampersand)
+        //Keywords
+        .token(r"->", Arrow)
+        //Strings
+        .token(r#"".*""#, String)
+        //Comments
+        .ignore(r"//.*")
+        //Finishing up
+        .ignore(r"\s+")
+        .build()
+        .expect("Lexer failed to build")
+});
 
 /// Does trivial parsing, such as collapsing "ident `(` `)`" into `MethodCall`
 fn pre_parse(
     tokens: Vec<regex_lexer::Token<TokenType>>,
 ) -> Result<Vec<regex_lexer::Token<TokenType>>, TokenizeError> {
     use TokenType::*;
-    let patterns = vec![
-        (vec![Ident, LParen], MethodCallStart), //
-    ];
+    let patterns = vec![(vec![Ident, LParen], MethodCallStart)];
 
     let mut out_tokens = Vec::with_capacity(tokens.len());
 
