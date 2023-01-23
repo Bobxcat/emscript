@@ -16,16 +16,6 @@ use crate::{
 
 use crate::memory::MemoryIndex;
 
-mod TMP {
-    /// The representation for a type
-    pub struct TypeRepr {
-        fields: Vec<(String, Type)>,
-    }
-    pub struct TypeImpl {
-        //
-    }
-}
-
 /// The name of the function taking in a
 pub const MEM_ALLOC_NAME: &str = "malloc";
 
