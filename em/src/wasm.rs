@@ -57,7 +57,7 @@ impl WasmAST {
 
         Self {
             tree: Default::default(),
-            mem_size: 5000,
+            mem_size: 1,
         }
     }
 }

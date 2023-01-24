@@ -1,3 +1,4 @@
+#![feature(int_roundings)]
 #![feature(ptr_metadata)]
 use std::{
     fs::File,
