@@ -13,17 +13,17 @@ pomelo = "0.1.5"
 regex-lexer = "0.2"
 # lazy_static = "*"
 once_cell = "1"
+
 # WASM dependencies, for compiling
 wasmer = "2.3.0"
 wasmer-compiler-cranelift = "2.3.0"
 # wasmer-compiler-llvm = "2.3.0"
 wasmer-engine-universal = "2.3.0"
 anyhow = "1"
-# multi-map = "1.3"
 bimap = "0.6.2"
 em_proc = { path = "../em_proc" }
+em_core = { path = "../em_core" }
 wasm-opt = "0"
-# wat = "1"
 wabt = "0"
 
 derive_more = "0"

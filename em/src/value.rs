@@ -5,7 +5,9 @@ use std::{
     rc::Rc,
 };
 
-use crate::{ast::ASTNodeType, memory::MemoryIndex};
+use em_core::memory::MemoryIndex;
+
+use crate::ast::ASTNodeType;
 
 pub mod custom_types {
     use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};

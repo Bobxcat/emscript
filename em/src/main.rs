@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use em_core::memory::MemoryIndex;
 use em_proc::generate_translation_with_sizes;
 use interface::Interface;
 use ir::IRAST;
@@ -20,7 +21,7 @@ use wasmer::{Exports, Function, ImportObject, Instance, Module, NativeFunc, Stor
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
-    memory::{MemoryIndex, WAllocatorDefault},
+    memory::WAllocatorDefault,
     runtime::Runtime,
     token::tokenize,
     traits::{wasm_ptr_as_ref_mut, GetRefFromMem},

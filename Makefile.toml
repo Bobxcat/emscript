@@ -1,0 +1,31 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
+[tasks.build-em-core]
+command = "cargo"
+args = ["build", "-p", "em_core"]
+
+[tasks.build-em-proc]
+command = "cargo"
+args = ["build", "-p", "em_proc"]
+dependencies = ["build-em-core"]
+
+[tasks.build-wasm-libraries]
+command = "cargo"
+args = [
+    "build",
+    "--release",
+    "-p",
+    "wasm_libraries",
+    "--target",
+    "wasm32-unknown-unknown",
+]
+dependencies = ["build-em-core"]
+
+[tasks.build-em]
+command = "cargo"
+args = ["build", "-p", "em"]
+dependencies = ["build-em-core", "build-em-proc", "build-wasm-libraries"]
+
+[tasks.build]
+dependencies = ["build-em"]

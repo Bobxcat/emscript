@@ -383,6 +383,7 @@ dependencies = [
  "anyhow",
  "bimap",
  "derive_more",
+ "em_core",
  "em_proc",
  "once_cell",
  "pomelo",

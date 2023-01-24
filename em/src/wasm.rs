@@ -14,7 +14,7 @@ use crate::{
     value::{self, custom_types::custom_types, Value},
 };
 
-use crate::memory::MemoryIndex;
+use em_core::memory::MemoryIndex;
 
 /// The name of the function taking in a
 pub const MEM_ALLOC_NAME: &str = "malloc";

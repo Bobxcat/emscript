@@ -8,7 +8,7 @@
 #![no_std]
 #![crate_type = "staticlib"]
 
-use emscript::memory::MemoryIndex;
+use em_core::{memory::MemoryIndex, *};
 
 extern "C" {
     fn malloc(size: MemoryIndex, align: MemoryIndex) -> MemoryIndex;

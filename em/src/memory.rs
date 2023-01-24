@@ -5,20 +5,14 @@ use std::{
 };
 
 use derive_more::{Add, AddAssign, From, Neg, Not, Sub, SubAssign};
+
+use em_core::memory::MemoryIndex;
 use once_cell::sync::Lazy;
 use wasmer::Pages;
 
 use crate::interface::WasmEnv;
 
 const PAGE_SIZE: u64 = u32::MAX as u64 + 1;
-
-/// The type representing an index in WASM memory
-#[cfg(not(feature = "mem_64bit"))]
-pub type MemoryIndex = u32;
-
-/// The type representing an index in WASM memory
-#[cfg(feature = "mem_64bit")]
-pub type MemoryIndex = u64;
 
 pub const MEM_ALLOC_NAME: &str = "malloc";
 pub const MEM_FREE_NAME: &str = "mfree";

@@ -9,12 +9,14 @@ use std::{
 use crate::{
     ast::StringContext,
     interface::parse_interface::Token,
-    memory::{MemoryIndex, WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
+    memory::{WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
     token::tokenize,
     traits::GetRefFromMem,
     utils::MultiMap,
     value::{custom_types::str_to_type, CustomTypeId, Type, TypeOrName},
 };
+
+use em_core::memory::MemoryIndex;
 
 use em_proc::generate_translation_with_sizes;
 use once_cell::sync::Lazy;
