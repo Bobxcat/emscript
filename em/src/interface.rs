@@ -21,7 +21,7 @@ use em_core::memory::MemoryIndex;
 use em_proc::generate_translation_with_sizes;
 use once_cell::sync::Lazy;
 use pomelo::pomelo;
-use wasmer::{Function, LazyInit, Memory, Store, WasmerEnv};
+use wasmer::{Function, FunctionEnv, FunctionEnvMut, LazyInit, Memory, Store, WasmPtr, WasmerEnv};
 
 use self::parse_interface::Parser;
 
@@ -201,10 +201,16 @@ fn lock_parse_data() -> anyhow::Result<MutexGuard<'static, ParseData>> {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MethodId(usize);
 
-#[derive(WasmerEnv, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct WasmEnv {
-    #[wasmer(export)]
     pub memory: LazyInit<Memory>,
+    pub store: Laz,
+}
+
+impl WasmEnv {
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// Represents a method import (from WASM perspective)
@@ -231,12 +237,21 @@ pub struct Interface {
 impl Interface {
     pub fn new(
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-        store: &Store,
-        env: &WasmEnv,
+        store: &mut Store,
+        env: &FunctionEnv<WasmEnv>,
     ) -> Self {
         let mut interface = Self::default();
 
         let ptr_type = Type::ptr_type();
+
+        const MALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+
+        const MREALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+
+        const MFREE_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
 
         //`malloc`
         {
@@ -246,65 +261,73 @@ impl Interface {
                 method_name: MEM_ALLOC_NAME.to_string(),
                 params: vec![ptr_type.clone(), ptr_type.clone()],
                 ret: ptr_type.clone(),
-                f: Function::new_native_with_env(
-                    &store,
-                    env.clone(),
-                    move |env: &WasmEnv, size: MemoryIndex, align: MemoryIndex| -> MemoryIndex {
+                f: Function::new_with_env(
+                    store,
+                    env,
+                    MALLOC_SIGNATURE,
+                    move |env: FunctionEnvMut<WasmEnv>, args: &[wasmer::Value]| {
+                        let (size, align) = unsafe {
+                            std::mem::transmute((args[0].unwrap_i32(), args[1].unwrap_i32()))
+                        };
                         let mut allocator = allocator.lock().expect("malloc failed to lock");
-                        allocator.malloc(env, size, align)
+                        let ret = wasmer::Value::I32(unsafe {
+                            std::mem::transmute(allocator.malloc(env, size, align))
+                        });
+
+                        Ok(vec![ret])
                     },
                 ),
             };
             interface.insert(imp);
         }
 
-        //`mrealloc`
-        {
-            let allocator = allocator.clone();
-            let imp = MethodImport {
-                mod_name: "env".to_string(),
-                method_name: MEM_REALLOC_NAME.to_string(),
-                params: vec![ptr_type.clone(), ptr_type.clone()],
-                ret: ptr_type.clone(),
-                f: Function::new_native_with_env(
-                    &store,
-                    env.clone(),
-                    move |env: &WasmEnv, loc: MemoryIndex, new_size: MemoryIndex| -> MemoryIndex {
-                        let mut allocator = allocator.lock().expect("mrealloc failed to lock");
-                        allocator.mrealloc(env, loc, new_size)
-                    },
-                ),
-            };
-            interface.insert(imp);
-        }
+        // //`mrealloc`
+        // {
+        //     let allocator = allocator.clone();
+        //     let imp = MethodImport {
+        //         mod_name: "env".to_string(),
+        //         method_name: MEM_REALLOC_NAME.to_string(),
+        //         params: vec![ptr_type.clone(), ptr_type.clone()],
+        //         ret: ptr_type.clone(),
+        //         f: Function::new_typed_with_env(
+        //             &store,
+        //             env.clone(),
+        //             move |env: &WasmEnv, loc: MemoryIndex, new_size: MemoryIndex| -> MemoryIndex {
+        //                 let mut allocator = allocator.lock().expect("mrealloc failed to lock");
+        //                 allocator.mrealloc(env, loc, new_size)
+        //             },
+        //         ),
+        //     };
+        //     interface.insert(imp);
+        // }
 
-        //`mfree`
-        {
-            let allocator = allocator.clone();
-            let imp = MethodImport {
-                mod_name: "env".to_string(),
-                method_name: MEM_REALLOC_NAME.to_string(),
-                params: vec![ptr_type.clone(), ptr_type.clone()],
-                ret: Type::Void,
-                f: Function::new_native_with_env(
-                    &store,
-                    env.clone(),
-                    move |env: &WasmEnv, loc: MemoryIndex, size: MemoryIndex| {
-                        let mut allocator = allocator.lock().expect("mrealloc failed to lock");
-                        allocator.mfree(env, loc, size)
-                    },
-                ),
-            };
-            interface.insert(imp);
-        }
+        // //`mfree`
+        // {
+        //     let allocator = allocator.clone();
+        //     let imp = MethodImport {
+        //         mod_name: "env".to_string(),
+        //         method_name: MEM_REALLOC_NAME.to_string(),
+        //         params: vec![ptr_type.clone(), ptr_type.clone()],
+        //         ret: Type::Void,
+        //         f: Function::new_typed_with_env(
+        //             &store,
+        //             env.clone(),
+        //             move |env: &WasmEnv, loc: MemoryIndex, size: MemoryIndex| {
+        //                 let mut allocator = allocator.lock().expect("mrealloc failed to lock");
+        //                 allocator.mfree(env, loc, size)
+        //             },
+        //         ),
+        //     };
+        //     interface.insert(imp);
+        // }
 
         interface
     }
     pub fn new_with_std(
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
         std_imps: HashSet<StdImport>,
-        store: &Store,
-        env: &WasmEnv,
+        store: &mut Store,
+        env: &FunctionEnv<WasmEnv>,
     ) -> Self {
         let mut interface = Self::new(allocator, store, env);
         interface.wasm_imports.reserve(std_imps.len());
@@ -328,9 +351,9 @@ impl Interface {
                     method_name: $name.to_string(),
                     params: $params,
                     ret: $ret,
-                    f: Function::new_native_with_env(
-                        &store,
-                        env.clone(),
+                    f: Function::new_typed_with_env(
+                        store,
+                        env,
                         generate_translation_with_sizes!($($translation)*),
                     ),
                 }
@@ -351,13 +374,13 @@ impl Interface {
                     fn c_println(s: &str) {
                         println!("{s}")
                     }
-                    ins!(
-                        new_imp!(
-                            "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
-                        ),
-                        new_imp!("env", "print", vec![Type::Int32], Type::Void, fn c_print(&str); (1)),
-                        new_imp!("env", "println", vec![Type::Int32], Type::Void, fn c_println(&str); (1))
-                    );
+                    // ins!(
+                    //     new_imp!(
+                    //         "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
+                    //     ),
+                    //     new_imp!("env", "print", vec![Type::Int32], Type::Void, fn c_print(&str); (1)),
+                    //     new_imp!("env", "println", vec![Type::Int32], Type::Void, fn c_println(&str); (1))
+                    // );
                 }
             };
         }

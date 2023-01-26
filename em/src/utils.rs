@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     hash::Hash,
-    ops::{Index, IndexMut},
+    ops::{Deref, Index, IndexMut},
     rc::Rc,
     time::{Duration, SystemTime},
 };

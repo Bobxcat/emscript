@@ -12,7 +12,7 @@ pub type MemoryIndex = u64;
 pub const STACK_PTR_VAR_NAME: &str = "_stack_ptr";
 /// The name of the global variable denoting the maximum size of the stack (in bytes)
 pub const STACK_MAX_SIZE_VAR_NAME: &str = "_stack_max_len";
-/// The name of the global variable denoting the maximum size of the stack (in bytes)
+/// The name of the global variable denoting the current size of the stack's allocation (in bytes)
 pub const STACK_SIZE_VAR_NAME: &str = "_stack_len";
 
 // ryan is so awesome!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!

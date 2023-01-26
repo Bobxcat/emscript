@@ -17,7 +17,10 @@ use runtime::RuntimeCfg;
 use wabt::ReadBinaryOptions;
 use wasm::{compile_irast, WasmAST};
 use wasm_opt::{Feature, OptimizationOptions};
-use wasmer::{Exports, Function, ImportObject, Instance, Module, NativeFunc, Store, WasmPtr};
+use wasmer::{
+    Exports, Function, FunctionEnv, Imports, Instance, Module, NativeFunc, Store, TypedFunction,
+    WasmPtr,
+};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport, WasmEnv},
@@ -68,21 +71,22 @@ mod wasm;
 
 fn instance(wasm_path: impl AsRef<Path>, interface: &Interface) -> anyhow::Result<Instance> {
     //Get a store and (for callbacks) an environment
-    let store = Store::default();
-    let env = WasmEnv::default();
+    let mut store = Store::default();
+    let env = WasmEnv::new();
 
     //Define the WASM environment
     let import_obj = {
-        let mut import_obj = ImportObject::new();
+        let mut import_obj = Imports::new();
 
-        //Create the namespace "env" and populate it using `interface`
-        let mut nm = Exports::new();
+        // //Create the namespace "env" and populate it using `interface`
+        // let mut nm = Exports::new();
 
         for (s, imp) in &interface.wasm_imports {
-            nm.insert(s, imp.f.clone());
+            import_obj.define("env", s, imp.f.clone());
+            // nm.insert(s, imp.f.clone());
         }
 
-        import_obj.register("env", nm);
+        // import_obj.define("env", nm);
 
         import_obj
     };
@@ -98,7 +102,7 @@ fn instance(wasm_path: impl AsRef<Path>, interface: &Interface) -> anyhow::Resul
     let module = Module::new(&store, &wasm_bytes)?;
 
     //Finally, create the instance itself
-    let instance = Instance::new(&module, &import_obj)?;
+    let instance = Instance::new(&mut store, &module, &import_obj)?;
 
     Ok(instance)
 }
@@ -165,7 +169,8 @@ fn compile_text(
     {
         let instance = instance(wasm_path_preopt, &interface)?;
 
-        let foo: NativeFunc<i32, i32> = instance.exports.get_native_function("foo")?;
+        let foo: TypedFunction<i32, i32> =
+            instance.exports.get_typed_function(&mut store, "foo")?;
 
         fn foo0(n: i32) -> i32 {
             let mut a = 0;
@@ -195,7 +200,7 @@ fn compile_text(
         // dbg!(foo.call(2)?);
 
         // dbg!(foo.call(4)?);
-        dbg!(time_dbg(|| foo.call(ARGS).unwrap()));
+        dbg!(time_dbg(|| foo.call(&mut store, ARGS).unwrap()));
     }
 
     // Currently, the WASM is *already* being optimized, so this part is not useful
@@ -218,14 +223,15 @@ fn compile_text(
     {
         let instance = instance(wasm_path, &interface)?;
 
-        let foo: NativeFunc<i32, i32> = instance.exports.get_native_function("foo")?;
+        let foo: TypedFunction<i32, i32> =
+            instance.exports.get_typed_function(&mut store, "foo")?;
 
         // dbg!(foo.call(1)?);
         // dbg!(foo.call(2)?);
 
         // dbg!(foo.call(4)?);
         // dbg!(foo.call(40)?);
-        dbg!(time_dbg(|| foo.call(ARGS).unwrap()));
+        dbg!(time_dbg(|| foo.call(&mut store, ARGS).unwrap()));
     }
 
     println!("\n\nfinished");
@@ -288,13 +294,15 @@ fn start() -> anyhow::Result<()> {
 
     let alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
-    let store = Store::default();
-    let env = WasmEnv::default();
+    let mut store = Store::default();
+    //
+    let env = FunctionEnv::new(&mut store, WasmEnv::new());
+    // let env = WasmEnv::default();
 
     let interface = {
         use StdImport::*;
         let mut i =
-            Interface::new_with_std(alloc, vec![StdOut].into_iter().collect(), &store, &env);
+            Interface::new_with_std(alloc, vec![StdOut].into_iter().collect(), &mut store, &env);
 
         //`Foo`
         {
@@ -312,6 +320,7 @@ fn start() -> anyhow::Result<()> {
         //Methods
 
         //`Foo`
+        #[cfg(not)]
         if false {
             #[repr(C)]
             struct Foo {
@@ -339,8 +348,8 @@ fn start() -> anyhow::Result<()> {
                     method_name: "foo_new".into(),
                     params: vec![Type::Int32, Type::Int32],
                     ret: str_to_type("Foo").unwrap(),
-                    f: Function::new_native_with_env(
-                        &store,
+                    f: Function::new_typed_with_env(
+                        &mut store,
                         env.clone(),
                         generate_translation_with_sizes!(fn foo_new(i32, i32) -> Foo; (1, 1) -> 2),
                     ),
@@ -359,32 +368,32 @@ fn start() -> anyhow::Result<()> {
                     method_name: "foo_fib".into(),
                     params: vec![Type::Ref(Box::new(str_to_type("Foo").unwrap()))],
                     ret: Type::Void,
-                    f: Function::new_native_with_env(
-                        &store,
-                        env.clone(),
+                    f: Function::new_typed_with_env(
+                        &mut store,
+                        &env,
                         generate_translation_with_sizes!(fn foo_fib(&mut Foo); (1)),
                     ),
                 });
             }
         }
 
-        //`add`
-        {
-            fn add(a: i32, b: i32) -> i32 {
-                a + b
-            }
-            i.insert(MethodImport {
-                mod_name: "env".into(),
-                method_name: "add".into(),
-                params: vec![Type::Int32, str_to_type("i32").unwrap()],
-                ret: Type::Int32,
-                f: Function::new_native_with_env(
-                    &store,
-                    env.clone(),
-                    generate_translation_with_sizes!(fn add(i32, i32) -> i32; (1, 1) -> 1),
-                ),
-            });
-        }
+        // //`add`
+        // {
+        //     fn add(a: i32, b: i32) -> i32 {
+        //         a + b
+        //     }
+        //     i.insert(MethodImport {
+        //         mod_name: "env".into(),
+        //         method_name: "add".into(),
+        //         params: vec![Type::Int32, str_to_type("i32").unwrap()],
+        //         ret: Type::Int32,
+        //         f: Function::new_typed_with_env(
+        //             &mut store,
+        //             env.clone(),
+        //             generate_translation_with_sizes!(fn add(i32, i32) -> i32; (1, 1) -> 1),
+        //         ),
+        //     });
+        // }
 
         i
     };
@@ -414,14 +423,17 @@ fn start() -> anyhow::Result<()> {
     //Now, call runtime methods.
     //For methods like frame update calls, the `NativeFunc<..>` can be cached
     {
-        let f_hello: NativeFunc<(), i32> = runtime.exports.get_native_function("hello")?;
-        let f_hello_ret = f_hello.call()?;
+        let f_hello: TypedFunction<(), i32> =
+            runtime.exports.get_typed_function(&mut store, "hello")?;
+        let f_hello_ret = f_hello.call(&mut store)?;
 
         println!("\nReturned from `hello()` call: {f_hello_ret}");
     }
     {
-        let f_fib: NativeFunc<i32, i32> = runtime.exports.get_native_function("fibonacci")?;
-        let f_fib = f_fib.call(15)?;
+        let f_fib: TypedFunction<i32, i32> = runtime
+            .exports
+            .get_typed_function(&mut store, "fibonacci")?;
+        let f_fib = f_fib.call(&mut store, 15)?;
 
         println!("\nReturned from `fibonacci(15)` call: {f_fib}");
     }

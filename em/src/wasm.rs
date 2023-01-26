@@ -168,7 +168,7 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
 
         // Load(t, s) => format!(),
         // Store(t, s) => format!("()"),
-        Global(s, t) => format!("(global ${s} {t} {})\n", children!()),
+        Global(s, t) => format!("(global ${s} (mut {t}) {})\n", children!()),
         Local(s, t) => format!("(local ${s} {t} {})\n", children!()),
 
         // GlobalGet(s) => format!("(global.get ${s}"),
