@@ -18,11 +18,6 @@ pub mod custom_types {
 
     use super::{CustomType, Type, TypeOrName};
 
-    // lazy_static! {
-    //     static ref CUSTOM_TYPES: RwLock<MultiMap<CustomTypeId, String, CustomType>> =
-    //         RwLock::new(MultiMap::default());
-    // }
-
     static CUSTOM_TYPES: Lazy<RwLock<MultiMap<CustomTypeId, String, CustomType>>> =
         Lazy::new(|| RwLock::new(MultiMap::default()));
 
@@ -158,11 +153,13 @@ pub enum Type {
 impl Type {
     /// Returns the type representing the width of wasm pointers into memory
     pub fn ptr_type() -> Self {
-        let ptr_id = std::any::TypeId::of::<MemoryIndex>();
-        if ptr_id == std::any::TypeId::of::<u32>() {
-            Self::Int32
-        } else {
-            Self::Int64
+        #[cfg(not(feature = "mem_64bit"))]
+        {
+            Type::Int64
+        }
+        #[cfg(feature = "mem_64bit")]
+        {
+            Type::Int32
         }
     }
 }

@@ -10,8 +10,6 @@ use em_core::memory::MemoryIndex;
 use once_cell::sync::Lazy;
 use wasmer::{FunctionEnvMut, Pages};
 
-use crate::interface::WasmEnv;
-
 const PAGE_SIZE: u64 = u32::MAX as u64 + 1;
 
 pub const MEM_ALLOC_NAME: &str = "malloc";

@@ -296,13 +296,12 @@ fn start() -> anyhow::Result<()> {
 
     let mut store = Store::default();
     //
-    let env = FunctionEnv::new(&mut store, WasmEnv::new());
-    // let env = WasmEnv::default();
+    // let env = FunctionEnv::new(&mut store, WasmEnv::new());
+    let env = WasmEnv::new();
 
     let interface = {
         use StdImport::*;
-        let mut i =
-            Interface::new_with_std(alloc, vec![StdOut].into_iter().collect(), &mut store, &env);
+        let mut i = Interface::new_with_std(vec![StdOut].into_iter().collect());
 
         //`Foo`
         {
