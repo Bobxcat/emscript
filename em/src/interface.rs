@@ -298,17 +298,6 @@ impl Interface {
             interface.insert(imp);
         }
 
-        // MethodImport {
-        //     mod_name: $env.to_string(),
-        //     method_name: $name.to_string(),
-        //     params: $params,
-        //     ret: $ret,
-        //     f: Function::new_native_with_env(
-        //         &store,
-        //         env.clone(),
-        //         generate_translation_with_sizes!($($translation)*),
-        //     ),
-        // }
         interface
     }
     pub fn new_with_std(

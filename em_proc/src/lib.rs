@@ -6,6 +6,8 @@ mod generate_translation_with_sizes;
 
 use proc_macro::TokenStream;
 
+/// TODO: Use `Pin<T>` to guarantee that translated values are not moved by the rust compiler (I think that's needed?)
+///
 /// Parses a method declaration re-statement of the form
 /// `fn method_name(Type1, Type2, ..., Typen) -> TypeRet; (size_of::<Type1>(), size_of::<Type2>(), ..., size_of::<Typen>()) -> size_of::<TypeRet>();`
 /// and generates a translation layer, a closure which takes wasm-friendly inputs and returns a wasm-friendly output,

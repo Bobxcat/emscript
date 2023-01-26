@@ -6,19 +6,24 @@
 */
 
 #![no_std]
-#![crate_type = "staticlib"]
+// #![crate_type = "staticlib"]
+#![feature(step_trait)]
+
+pub mod iter;
+
+use core::iter::Step;
 
 use em_core::{memory::MemoryIndex, *};
 
 extern "C" {
-    fn malloc(size: MemoryIndex, align: MemoryIndex) -> MemoryIndex;
+    pub fn malloc(size: MemoryIndex, align: MemoryIndex) -> MemoryIndex;
+    pub fn mrealloc(loc: MemoryIndex, new_size: MemoryIndex) -> MemoryIndex;
+    pub fn mfree(loc: MemoryIndex, size: MemoryIndex);
 }
 
-pub extern "C" fn lib_foo(a: i32, b: i32) {
-    // WAllocator
-}
-
-#[repr(C)]
-struct Iterator {
-    //
+#[no_mangle]
+pub extern "C" fn lib_foo(a: u32, b: u32) {
+    unsafe {
+        mfree(a + b, b - a);
+    }
 }

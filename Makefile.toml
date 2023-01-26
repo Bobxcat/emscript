@@ -10,22 +10,19 @@ command = "cargo"
 args = ["build", "-p", "em_proc"]
 dependencies = ["build-em-core"]
 
-[tasks.build-wasm-libraries]
-command = "cargo"
-args = [
-    "build",
-    "--release",
-    "-p",
-    "wasm_libraries",
-    "--target",
-    "wasm32-unknown-unknown",
-]
-dependencies = ["build-em-core"]
+# [tasks.build-wasm-libraries]
+# command = "cargo"
+# args = ["build", "--release", "-p", "wasm_libraries"]
+# dependencies = ["build-em-core"]
 
 [tasks.build-em]
 command = "cargo"
-args = ["build", "-p", "em"]
-dependencies = ["build-em-core", "build-em-proc", "build-wasm-libraries"]
+args = ["build", "-p", "emscript"]
+dependencies = [
+    "build-em-core",
+    "build-em-proc",
+    # "build-wasm-libraries"
+]
 
-[tasks.build]
+[tasks.build-all]
 dependencies = ["build-em"]

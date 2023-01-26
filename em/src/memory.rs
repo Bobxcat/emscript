@@ -99,7 +99,7 @@ pub struct WAllocatorDefault<const CHUNK_SIZE: MemoryIndex> {
     allocated: Vec<ChunkRange>,
     /// Each element of this list represents a range of memory which has been allocated and then freed.
     ///
-    /// It is possible for two chunks to be directly next to each other on this list (i.e. freed[i].last == freed[i].start - 1 can happen)
+    /// It is possible for two chunks to be directly next to each other on this list (i.e. freed[i].last == freed[i + 1].start - 1 can happen)
     freed: Vec<ChunkRange>,
 }
 
@@ -134,6 +134,12 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
     /// is where a range with the given start index could be inserted while maintaining sort order
     fn search_allocated(&self, start_idx: ChunkIdx) -> Result<usize, usize> {
         self.allocated.binary_search_by(|r| r.first.cmp(&start_idx))
+    }
+    /// Searches `freed` for the given start index. Follows binary search rules, so
+    /// returns `Ok(idx)` if the matching start index was found. Otherwise, returns `Err(idx)`, which
+    /// is where a range with the given start index could be inserted while maintaining sort order
+    fn search_freed(&self, start_idx: ChunkIdx) -> Result<usize, usize> {
+        self.freed.binary_search_by(|r| r.first.cmp(&start_idx))
     }
     /// Allocates the given range of memory
     fn allocate(&mut self, range: ChunkRange) {
@@ -220,6 +226,38 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
 
         // Search through the chunks after `alloc_idx` to see if there is enough room already.
         // Otherwise, just allocate the whole chunk again and memcpy the values
+
+        let new_size_chunks: ChunkIdx = ((loc % CHUNK_SIZE + new_size).div_ceil(CHUNK_SIZE)).into();
+
+        let curr_end_idx = self.allocated[alloc_idx].last;
+
+        // Use `self.search_freed(..)` until enough freed chunks have been found.
+        // Do NOT allocate these freed chunks yet, since it's possible that not enough
+        // freed chunks are available
+
+        let mut freeable_chunks = Vec::new();
+
+        // The number of chunks which are still needed for growing this memory portion to be possible
+        let mut remaining_chunks = new_size_chunks - (self.allocated[alloc_idx].len());
+
+        while remaining_chunks > 0.into() {
+            match self.search_freed(curr_end_idx + 1.into()) {
+                Ok(freed_idx) => {
+                    let freed_range = self.freed[freed_idx];
+                    remaining_chunks =
+                        (remaining_chunks.0.saturating_sub(freed_range.len().0)).into();
+                    freeable_chunks.push(freed_idx);
+                    // If enough chunks have been found in a row, break out of the loop
+                    if remaining_chunks == 0.into() {
+                        break;
+                    }
+                }
+                // If there was no freed chunk at this index, break out of the loop
+                Err(_) => {
+                    break;
+                }
+            }
+        }
 
         todo!()
     }

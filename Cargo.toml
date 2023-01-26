@@ -1,3 +1,2 @@
 [workspace]
-
-members = ["em_core", "em_proc", "em", "wasm_libraries"]
+members = ["em_core", "em_proc", "em"]
