@@ -462,6 +462,7 @@ dependencies = [
  "wasmer",
  "wasmer-compiler-cranelift 2.3.0",
  "wasmer-engine-universal",
+ "wasmer-vm 3.1.1",
 ]
 
 [[package]]

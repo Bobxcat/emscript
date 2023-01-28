@@ -10,6 +10,8 @@ use em_core::memory::MemoryIndex;
 use once_cell::sync::Lazy;
 use wasmer::{FunctionEnvMut, Pages};
 
+use crate::WasmEnv;
+
 const PAGE_SIZE: u64 = u32::MAX as u64 + 1;
 
 pub const MEM_ALLOC_NAME: &str = "malloc";
@@ -132,9 +134,11 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         self.len += new_chunks;
         let len_bytes = (self.len.0 * CHUNK_SIZE) as u64;
 
-        let mem = env.data().memory.get_ref().unwrap();
-        while len_bytes < mem.data_size() {
-            mem.grow(1).expect("Memory failed to grow");
+        let mem = env.data().memory.unwrap();
+        let view = mem.view(WasmEnv::store());
+        while len_bytes < view.data_size() {
+            mem.grow(WasmEnv::store(), 1)
+                .expect("Memory failed to grow");
         }
     }
     /// Searches `allocated` for the given start index. Follows binary search rules, so

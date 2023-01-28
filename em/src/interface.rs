@@ -1,4 +1,5 @@
 use std::{
+    borrow::BorrowMut,
     cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
@@ -23,7 +24,8 @@ use em_proc::generate_translation_with_sizes;
 use once_cell::sync::Lazy;
 use pomelo::pomelo;
 use wasmer::{
-    Function, FunctionEnv, FunctionEnvMut, Instance, Memory, Store, StoreMut, StoreRef, WasmPtr,
+    Function, FunctionEnv, FunctionEnvMut, Imports, Instance, Memory, Store, StoreMut, StoreRef,
+    WasmPtr,
 };
 
 use self::parse_interface::Parser;
@@ -204,22 +206,6 @@ fn lock_parse_data() -> anyhow::Result<MutexGuard<'static, ParseData>> {
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MethodId(usize);
 
-// pub struct WasmEnv {
-//     instance: Rc<Mutex<Instance>>,
-// }
-
-// pub struct WasmEnv<'a> {
-//     pub memory: Memory,
-//     pub store: StoreMut<'a>,
-// }
-
-// impl WasmEnv {
-//     pub fn new(store: &mut Store) -> Self {
-//         store.
-//         // Self::default()
-//     }
-// }
-
 /// Represents a method import (from WASM perspective)
 #[derive(Debug, Clone)]
 pub struct MethodImport {
@@ -243,10 +229,7 @@ pub struct Interface {
 }
 
 impl Interface {
-    pub fn new(// allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-        // store: &mut Store,
-        // env: &FunctionEnv<WasmEnv>,
-    ) -> Self {
+    pub fn new() -> Self {
         let mut interface = Self::default();
 
         // //`mrealloc`
@@ -291,26 +274,23 @@ impl Interface {
 
         interface
     }
-    pub fn new_with_std(
-        // allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-        std_imps: HashSet<StdImport>,
-        // store: &mut Store,
-        // env: &FunctionEnv<WasmEnv>,
-    ) -> Self {
+    pub fn new_with_std(std_imps: HashSet<StdImport>) -> Self {
         Self {
             wasm_imports: Default::default(),
             std_imports: std_imps,
         }
     }
 
-    /// Populates an instance's allocation-related methods
+    /// Returns an `imports` object defining every `wasm_import`
     fn init_alloc(
         &mut self,
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-
-        instance: &mut Instance,
-        store: &mut Store,
+        imports: &mut Imports,
+        store: StoreMut<'_>,
+        env: &FunctionEnv<WasmEnv>,
     ) {
+        // let mem = instance.exports.get_memory("memory").unwrap();
+        //
         const MALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
             ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
 
@@ -325,16 +305,17 @@ impl Interface {
         // `malloc`
         {
             let allocator = allocator.clone();
-            let store = ;
             let imp = MethodImport {
                 mod_name: "env".to_string(),
                 method_name: MEM_ALLOC_NAME.to_string(),
                 params: vec![ptr_type.clone(), ptr_type.clone()],
                 ret: ptr_type.clone(),
-                f: Some(Function::new(
-                    store,
+                f: Some(Function::new_with_env(
+                    store.borrow_mut(),
+                    env,
                     MALLOC_SIGNATURE,
-                    move |args: &[wasmer::Value]| {
+                    move |env: FunctionEnvMut<WasmEnv>, args: &[wasmer::Value]| {
+                        let m = env.data().memory.view(&store);
                         let (size, align) = unsafe {
                             std::mem::transmute((args[0].unwrap_i32(), args[1].unwrap_i32()))
                         };
@@ -347,17 +328,22 @@ impl Interface {
                     },
                 )),
             };
-            self.
+            if let Some(prev) = self.insert(imp) {
+                println!("importing `malloc` overrided the following import: {prev:#?}");
+            }
         }
     }
 
     /// Populates an instance's imports using this interface. This must be called before using an instance, just after its creation
-    pub fn init_instance(
+    pub fn get_imports_obj(
         self,
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
         instance: &mut Instance,
+        store: StoreMut<'_>,
         functions: HashMap<String, Function>,
-    ) {
+    ) -> Imports {
+        let mut imports = Imports::default();
+
         /// Inserts some number of method imports into the interface
         macro_rules! ins {
             ($($val:expr),*) => {
@@ -391,15 +377,20 @@ impl Interface {
             match imp {
                 //StdOut, such as `print` and `print_num`
                 StdImport::StdOut => {
-                    fn c_print_num(n: i32) {
+                    fn print_num(n: i32) {
                         print!("{n}")
                     }
-                    fn c_print(s: &str) {
+                    fn print(s: &str) {
                         print!("{s}")
                     }
-                    fn c_println(s: &str) {
+                    fn println(s: &str) {
                         println!("{s}")
                     }
+                    imports.define(
+                        "env",
+                        "print_num",
+                        Function::new_typed(store.borrow_mut(), print_num),
+                    );
                     // ins!(
                     //     new_imp!(
                     //         "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
@@ -410,6 +401,8 @@ impl Interface {
                 }
             };
         }
+
+        todo!()
     }
 
     pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {

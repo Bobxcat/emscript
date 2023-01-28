@@ -1,5 +1,7 @@
 #![feature(int_roundings)]
 #![feature(ptr_metadata)]
+#![feature(option_get_or_insert_default)]
+
 use std::{
     fs::File,
     io::{stdout, Read, Write},
@@ -12,18 +14,19 @@ use em_core::memory::MemoryIndex;
 use em_proc::generate_translation_with_sizes;
 use interface::Interface;
 use ir::IRAST;
+use once_cell::sync::Lazy;
 use parse::parse;
 use runtime::RuntimeCfg;
 use wabt::ReadBinaryOptions;
 use wasm::{compile_irast, WasmAST};
 use wasm_opt::{Feature, OptimizationOptions};
 use wasmer::{
-    Exports, Function, FunctionEnv, Imports, Instance, Module, NativeFunc, Store, TypedFunction,
-    WasmPtr,
+    AsStoreMut, AsStoreRef, Exports, Function, FunctionEnv, FunctionEnvMut, Imports, Instance,
+    Memory, Module, NativeFunc, Store, TypedFunction, WasmPtr,
 };
 
 use crate::{
-    interface::{compile_api, MethodImport, StdImport, WasmEnv},
+    interface::{compile_api, MethodImport, StdImport},
     memory::WAllocatorDefault,
     runtime::Runtime,
     token::tokenize,
@@ -69,44 +72,140 @@ mod wasm;
 /// - Generate an EmScript AST from the input code
 /// - Translate EmScript AST to IR AST, keeping track of exported methods (NOTE: the name of a method and its wasm-imported name can be different)
 
-fn instance(wasm_path: impl AsRef<Path>, interface: &Interface) -> anyhow::Result<Instance> {
-    //Get a store and (for callbacks) an environment
-    let mut store = Store::default();
-    let env = WasmEnv::new();
+// fn instance(wasm_path: impl AsRef<Path>, interface: &Interface) -> anyhow::Result<Instance> {
+//     //Get a store and (for callbacks) an environment
+//     let mut store = Store::default();
+//     // let env = WasmEnv::new();
 
-    //Define the WASM environment
-    let import_obj = {
-        let mut import_obj = Imports::new();
+//     //Define the WASM environment
+//     // let import_obj = {
+//     //     let mut import_obj = Imports::new();
 
-        // //Create the namespace "env" and populate it using `interface`
-        // let mut nm = Exports::new();
+//     //     // //Create the namespace "env" and populate it using `interface`
+//     //     // let mut nm = Exports::new();
 
-        for (s, imp) in &interface.wasm_imports {
-            import_obj.define("env", s, imp.f.clone());
-            // nm.insert(s, imp.f.clone());
-        }
+//     //     for (s, imp) in &interface.wasm_imports {
+//     //         import_obj.define("env", s, imp.f.clone());
+//     //         // nm.insert(s, imp.f.clone());
+//     //     }
 
-        // import_obj.define("env", nm);
+//     //     // import_obj.define("env", nm);
 
-        import_obj
-    };
+//     //     import_obj
+//     // };
+//     let alloc = Arc::new(Mutex::new(WAllocatorDefault::default()));
+//     let import_obj = interface.get_imports_obj(alloc, instance, store, functions);
 
-    //Load the WASM
-    let wasm_bytes = {
-        let mut buf = Vec::new();
-        File::open(wasm_path)?.read_to_end(&mut buf)?;
-        buf
-    };
+//     //Load the WASM
+//     let wasm_bytes = {
+//         let mut buf = Vec::new();
+//         File::open(wasm_path)?.read_to_end(&mut buf)?;
+//         buf
+//     };
 
-    //Define WASM runtime
-    let module = Module::new(&store, &wasm_bytes)?;
+//     //Define WASM runtime
+//     let module = Module::new(&store, &wasm_bytes)?;
 
-    //Finally, create the instance itself
-    let instance = Instance::new(&mut store, &module, &import_obj)?;
+//     //Finally, create the instance itself
+//     let instance = Instance::new(&mut store, &module, &import_obj)?;
 
-    Ok(instance)
+//     Ok(instance)
+// }
+
+static WASM_STORE: Lazy<Option<Store>> = Lazy::new(|| None);
+
+pub struct WasmEnv {
+    pub memory: Option<Memory>,
 }
 
+impl WasmEnv {
+    pub fn store() -> &'static mut Store {
+        WASM_STORE.get_or_insert_default()
+    }
+}
+
+/// * `raw` - The raw emscript text to be compiled
+/// * `cfg` - The runtime configuration
+/// * `interface` - The interface which defines host methods. This is not expected to provide method implementations right away
+/// * `store` - The store for wasm code
+/// * `implement_interface_methods` - A callback which is used to populate the method implementations of the given interface
+fn compile(
+    raw: &str,
+    cfg: RuntimeCfg,
+    interface: Interface,
+    store: Store,
+
+    implement_interface_methods: impl FnOnce(&mut Interface, &mut Store, &FunctionEnv<WasmEnv>),
+) -> anyhow::Result<Instance> {
+    let toks = tokenize(raw)?;
+
+    let ast = parse(toks);
+    if let Err(_e) = ast {
+        // println!("\n==Tokens==\n{:#?}\n=========", tokens);
+        return Err(anyhow::format_err!("AST parsing error encountered"));
+    }
+    let mut ast = ast.unwrap();
+
+    let mut ir_ast = IRAST::from_ast(&ast, &interface)?;
+    ir_ast.mangle(vec!["foo"].iter().map(|s| *s).collect());
+
+    let wasm_ast = compile_irast(&ir_ast)?;
+
+    println!("Generated wasm:\n{wasm_ast:?}");
+
+    let wasm_txt = &format!("{wasm_ast}");
+
+    let wasm_nofilter = &PathBuf::from_str("em_target/wasm/main_nofilter.wat")?;
+    File::create(&wasm_nofilter)?.write_all(wasm_txt.as_bytes())?;
+    //Turn the WASM text into a `.wasm` binary, which is smaller and such
+    //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
+    let wasm = &wabt::wat2wasm(wasm_txt)?[..];
+
+    //Verify the wasm binary with wabt
+    {
+        let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
+        module.validate()?;
+    }
+
+    let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
+    File::create(&wasm_path_preopt)?.write_all(wasm)?;
+
+    println!("=====Running unoptimized=====");
+    const ARGS: i32 = 1000000000;
+    //Run unoptimized
+    {
+        // Get a wasm module from `wasm_path_preopt`
+        let module = Module::new(store.engine(), wasm)?;
+
+        // Define the imports
+        let mut imports = Imports::new();
+
+        // Get the environment needed for all the methods
+        let env = { FunctionEnv::new(&mut store, WasmEnv { memory: None }) };
+
+        // Populate `interface` with method implementations
+        implement_interface_methods(&mut interface, &mut store, &env);
+
+        // imports.define(
+        //     "env",
+        //     "foo",
+        //     Function::new_with_env(&mut store, &env, ([], []), |env, args| {
+        //         // This is a function
+        //         todo!()
+        //     }),
+        // );
+
+        let instance = Instance::new(&mut store, &module, &imports)?;
+
+        //Finish populating `env`
+        env.as_mut(&mut store).memory = Some(instance.exports.get_memory("memory")?.clone());
+        *WASM_STORE = Some(store);
+    }
+
+    todo!()
+}
+
+#[cfg(not)]
 fn compile_text(
     raw: &str,
     cfg: RuntimeCfg,
@@ -295,9 +394,6 @@ fn start() -> anyhow::Result<()> {
     let alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
     let mut store = Store::default();
-    //
-    // let env = FunctionEnv::new(&mut store, WasmEnv::new());
-    let env = WasmEnv::new();
 
     let interface = {
         use StdImport::*;
@@ -408,7 +504,8 @@ fn start() -> anyhow::Result<()> {
     // println!("Compiled interface:\n{:#?}", interface);
 
     let raw = include_str!("test.em");
-    let runtime = compile_text(
+
+    let runtime = compile(
         raw,
         RuntimeCfg {
             print_cast: false,
@@ -417,6 +514,46 @@ fn start() -> anyhow::Result<()> {
         },
         interface,
         store,
+        // Implement non-core custom methods
+        |interface, store, env| {
+            //`add`
+            {
+                fn add(a: i32, b: i32) -> i32 {
+                    a + b
+                }
+                interface.insert(MethodImport {
+                    mod_name: "env".into(),
+                    method_name: "add".into(),
+                    params: vec![Type::Int32, str_to_type("i32").unwrap()],
+                    ret: Type::Int32,
+                    f: Some(Function::new_typed(&mut store, add)),
+                });
+            }
+
+            //`get_0th`
+            {
+                fn get_0th(env: FunctionEnvMut<WasmEnv>) -> i32 {
+                    let store = WasmEnv::store();
+                    let view = env.data().memory.unwrap().view(store);
+                    let vals = [
+                        view.read_u8(0).unwrap(),
+                        view.read_u8(1).unwrap(),
+                        view.read_u8(2).unwrap(),
+                        view.read_u8(3).unwrap(),
+                    ];
+
+                    i32::from_ne_bytes(vals)
+                }
+                interface.insert(MethodImport {
+                    mod_name: "env".into(),
+                    method_name: "add".into(),
+                    params: vec![Type::Int32, str_to_type("i32").unwrap()],
+                    ret: Type::Int32,
+                    f: Some(Function::new_typed_with_env(&mut store, env, get_0th)),
+                });
+            }
+            todo!()
+        },
     )?;
 
     //Now, call runtime methods.

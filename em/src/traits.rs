@@ -1,9 +1,12 @@
 use std::{
     ffi::CStr,
+    io::Read,
     ptr::{self, slice_from_raw_parts_mut, Pointee},
 };
 
-use wasmer::{Memory, WasmPtr};
+use wasmer::{Memory, Store, WasmPtr};
+
+use crate::WasmEnv;
 
 #[inline]
 pub unsafe fn wasm_ptr_as_ref<'a, T>(offset: usize, mem: &'a Memory) -> &'a T
@@ -22,6 +25,8 @@ where
 }
 
 /// See [Pointee] for more details on `meta`
+///
+/// Converts a `WasmPtr` to a reference into the given `memory` using unsafe conversion
 pub unsafe fn wasm_ptr_as_ref_with_size<'a, T>(
     offset: usize,
     mem: &'a Memory,
@@ -30,11 +35,20 @@ pub unsafe fn wasm_ptr_as_ref_with_size<'a, T>(
 where
     T: ?Sized,
 {
-    let view = mem.view::<u8>();
-
+    let view = mem.view(WasmEnv::store());
+    #[derive(Debug, Clone)]
+    pub struct MemoryTmp {
+        pub(crate) handle: wasmer_vm::StoreHandle<wasmer::vm::VMMemory>,
+    }
     unsafe {
-        let val_start = view[offset].as_ptr() as *const ();
+        let mem: &MemoryTmp = std::mem::transmute(mem);
+        mem.handle.get(WasmEnv::store().tunables()).0.vmmemory();
+        struct Foo(u8);
+        let ptr: WasmPtr<u8, _> = WasmPtr::new(offset);
+        let val_start = ptr.deref();
+
         let as_t: *const T = ptr::from_raw_parts(val_start, meta);
+        //
 
         as_t.as_ref().unwrap()
     }
