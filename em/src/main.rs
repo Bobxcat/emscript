@@ -2,27 +2,29 @@
 #![feature(ptr_metadata)]
 #![feature(option_get_or_insert_default)]
 
+// use core::slice::SlicePattern;
 use std::{
     fs::File,
     io::{stdout, Read, Write},
     path::{Path, PathBuf},
     str::FromStr,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use em_core::memory::MemoryIndex;
 use em_proc::generate_translation_with_sizes;
-use interface::Interface;
+use interface::InterfaceDef;
 use ir::IRAST;
 use once_cell::sync::Lazy;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wabt::ReadBinaryOptions;
+// use runtime::RuntimeCfg;
+// use wabt::ReadBinaryOptions;
 use wasm::{compile_irast, WasmAST};
-use wasm_opt::{Feature, OptimizationOptions};
+// use wasm_opt::{Feature, OptimizationOptions};
 use wasmer::{
     AsStoreMut, AsStoreRef, Exports, Function, FunctionEnv, FunctionEnvMut, Imports, Instance,
-    Memory, Module, NativeFunc, Store, TypedFunction, WasmPtr,
+    Memory, Module, Store, TypedFunction, WasmPtr,
 };
 
 use crate::{
@@ -30,7 +32,6 @@ use crate::{
     memory::WAllocatorDefault,
     runtime::Runtime,
     token::tokenize,
-    traits::{wasm_ptr_as_ref_mut, GetRefFromMem},
     utils::time_dbg,
     value::{
         custom_types::{custom_types, insert_custom_type, str_to_type},
@@ -45,7 +46,7 @@ extern crate wasmer_compiler_cranelift;
 // extern crate wasmer_compiler_llvm;
 extern crate anyhow;
 extern crate bimap;
-extern crate wasmer_engine_universal;
+// extern crate wasmer_engine_universal;
 
 mod ast;
 mod c_ast;
@@ -112,31 +113,34 @@ mod wasm;
 //     Ok(instance)
 // }
 
-static WASM_STORE: Lazy<Option<Store>> = Lazy::new(|| None);
+static WASM_STORE: Lazy<Mutex<Option<Store>>> = Lazy::new(|| Mutex::new(None));
 
 pub struct WasmEnv {
     pub memory: Option<Memory>,
 }
 
 impl WasmEnv {
-    pub fn store() -> &'static mut Store {
-        WASM_STORE.get_or_insert_default()
+    pub fn store() -> MutexGuard<'static, Option<Store>> {
+        WASM_STORE.lock().unwrap()
     }
 }
 
 /// * `raw` - The raw emscript text to be compiled
 /// * `cfg` - The runtime configuration
-/// * `interface` - The interface which defines host methods. This is not expected to provide method implementations right away
+/// * `interface` - The interface definition which defines the host methods which will be used
 /// * `store` - The store for wasm code
 /// * `implement_interface_methods` - A callback which is used to populate the method implementations of the given interface
 fn compile(
     raw: &str,
     cfg: RuntimeCfg,
-    interface: Interface,
-    store: Store,
+    mut interface: InterfaceDef,
+    mut store: Store,
 
-    implement_interface_methods: impl FnOnce(&mut Interface, &mut Store, &FunctionEnv<WasmEnv>),
+    implement_interface_methods: impl FnOnce(&mut InterfaceDef, &mut Store, &FunctionEnv<WasmEnv>),
 ) -> anyhow::Result<Instance> {
+    // Set WASM_STORE
+    *WASM_STORE.lock().unwrap() = Some(store);
+
     let toks = tokenize(raw)?;
 
     let ast = parse(toks);
@@ -157,52 +161,64 @@ fn compile(
 
     let wasm_nofilter = &PathBuf::from_str("em_target/wasm/main_nofilter.wat")?;
     File::create(&wasm_nofilter)?.write_all(wasm_txt.as_bytes())?;
+
     //Turn the WASM text into a `.wasm` binary, which is smaller and such
     //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
-    let wasm = &wabt::wat2wasm(wasm_txt)?[..];
+    let mut store = WasmEnv::store();
 
-    //Verify the wasm binary with wabt
-    {
-        let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
-        module.validate()?;
-    }
+    let wasm = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
+    let wasm = &wasm.serialize().unwrap().to_vec();
+    // let wasm = &wabt::wat2wasm(wasm_txt)?[..];
+
+    // //Verify the wasm binary with wabt
+    // {
+    //     let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
+    //     module.validate()?;
+    // }
 
     let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
+    println!("d");
 
     println!("=====Running unoptimized=====");
     const ARGS: i32 = 1000000000;
     //Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
-        let module = Module::new(store.engine(), wasm)?;
+        println!("e");
+        let module = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
+        println!("f");
 
         // Define the imports
-        let mut imports = Imports::new();
+        // let mut imports = Imports::new();
 
         // Get the environment needed for all the methods
-        let env = { FunctionEnv::new(&mut store, WasmEnv { memory: None }) };
+        let env = { FunctionEnv::new(store.as_mut().unwrap(), WasmEnv { memory: None }) };
 
         // Populate `interface` with method implementations
-        implement_interface_methods(&mut interface, &mut store, &env);
+        implement_interface_methods(&mut interface, store.as_mut().unwrap(), &env);
 
-        // imports.define(
-        //     "env",
-        //     "foo",
-        //     Function::new_with_env(&mut store, &env, ([], []), |env, args| {
-        //         // This is a function
-        //         todo!()
-        //     }),
-        // );
+        // Generate the default allocator
+        let allocator = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
-        let instance = Instance::new(&mut store, &module, &imports)?;
+        // Use `interface` to populate `imports`
+
+        // But first, drop the current handle to `store` to avoid a perma-lock
+        std::mem::drop(store);
+        let imports = interface.get_imports_obj(allocator, &env);
+        let mut store = WasmEnv::store();
+
+        let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
 
         //Finish populating `env`
-        env.as_mut(&mut store).memory = Some(instance.exports.get_memory("memory")?.clone());
-        *WASM_STORE = Some(store);
-    }
+        env.as_mut(store.as_mut().unwrap()).memory =
+            Some(instance.exports.get_memory("memory")?.clone());
 
-    todo!()
+        //
+
+        todo!()
+        // Ok(instance)
+    }
 }
 
 #[cfg(not)]
@@ -386,8 +402,9 @@ fn main() {
 
 fn start() -> anyhow::Result<()> {
     println!(
-        "Memory index is: {} bytes",
-        std::mem::size_of::<MemoryIndex>()
+        "Memory index is: {} bytes ({} bits)",
+        std::mem::size_of::<MemoryIndex>(),
+        std::mem::size_of::<MemoryIndex>() * 8
     );
     use runtime::OptLevel::*;
 
@@ -397,7 +414,7 @@ fn start() -> anyhow::Result<()> {
 
     let interface = {
         use StdImport::*;
-        let mut i = Interface::new_with_std(vec![StdOut].into_iter().collect());
+        let mut i = InterfaceDef::new_with_std(vec![StdOut].into_iter().collect());
 
         //`Foo`
         {
@@ -413,6 +430,17 @@ fn start() -> anyhow::Result<()> {
         }
 
         //Methods
+
+        //`add`
+        {
+            i.insert(MethodImport {
+                mod_name: "env".into(),
+                method_name: "add".into(),
+                params: vec![Type::Int32, Type::Int32],
+                ret: Type::Int32,
+                f: None,
+            });
+        }
 
         //`Foo`
         #[cfg(not)]
@@ -472,24 +500,6 @@ fn start() -> anyhow::Result<()> {
             }
         }
 
-        // //`add`
-        // {
-        //     fn add(a: i32, b: i32) -> i32 {
-        //         a + b
-        //     }
-        //     i.insert(MethodImport {
-        //         mod_name: "env".into(),
-        //         method_name: "add".into(),
-        //         params: vec![Type::Int32, str_to_type("i32").unwrap()],
-        //         ret: Type::Int32,
-        //         f: Function::new_typed_with_env(
-        //             &mut store,
-        //             env.clone(),
-        //             generate_translation_with_sizes!(fn add(i32, i32) -> i32; (1, 1) -> 1),
-        //         ),
-        //     });
-        // }
-
         i
     };
 
@@ -521,55 +531,62 @@ fn start() -> anyhow::Result<()> {
                 fn add(a: i32, b: i32) -> i32 {
                     a + b
                 }
+                // Insert *over* the existing import for `add`, this time with an implementation
                 interface.insert(MethodImport {
                     mod_name: "env".into(),
                     method_name: "add".into(),
                     params: vec![Type::Int32, str_to_type("i32").unwrap()],
                     ret: Type::Int32,
-                    f: Some(Function::new_typed(&mut store, add)),
+                    f: Some(Function::new_typed(store, add)),
                 });
             }
 
-            //`get_0th`
-            {
-                fn get_0th(env: FunctionEnvMut<WasmEnv>) -> i32 {
-                    let store = WasmEnv::store();
-                    let view = env.data().memory.unwrap().view(store);
-                    let vals = [
-                        view.read_u8(0).unwrap(),
-                        view.read_u8(1).unwrap(),
-                        view.read_u8(2).unwrap(),
-                        view.read_u8(3).unwrap(),
-                    ];
+            // //`get_0th`
+            // {
+            //     fn get_0th(env: FunctionEnvMut<WasmEnv>) -> i32 {
+            //         let mut store = WasmEnv::store();
+            //         let store = store.as_mut().unwrap();
 
-                    i32::from_ne_bytes(vals)
-                }
-                interface.insert(MethodImport {
-                    mod_name: "env".into(),
-                    method_name: "add".into(),
-                    params: vec![Type::Int32, str_to_type("i32").unwrap()],
-                    ret: Type::Int32,
-                    f: Some(Function::new_typed_with_env(&mut store, env, get_0th)),
-                });
-            }
-            todo!()
+            //         let view = env.data().memory.as_ref().unwrap().view(store);
+            //         let vals = [
+            //             view.read_u8(0).unwrap(),
+            //             view.read_u8(1).unwrap(),
+            //             view.read_u8(2).unwrap(),
+            //             view.read_u8(3).unwrap(),
+            //         ];
+
+            //         i32::from_ne_bytes(vals)
+            //     }
+
+            //     interface.insert(MethodImport {
+            //         mod_name: "env".into(),
+            //         method_name: "add".into(),
+            //         params: vec![Type::Int32, str_to_type("i32").unwrap()],
+            //         ret: Type::Int32,
+            //         f: Some(Function::new_typed_with_env(store, env, get_0th)),
+            //     });
+            // }
+            // todo!()
         },
     )?;
 
     //Now, call runtime methods.
     //For methods like frame update calls, the `NativeFunc<..>` can be cached
+
+    //Get the store which has now been moved
+    let mut store = WasmEnv::store();
+    let store = store.as_mut().unwrap();
+
     {
-        let f_hello: TypedFunction<(), i32> =
-            runtime.exports.get_typed_function(&mut store, "hello")?;
-        let f_hello_ret = f_hello.call(&mut store)?;
+        let f_hello: TypedFunction<(), i32> = runtime.exports.get_typed_function(store, "hello")?;
+        let f_hello_ret = f_hello.call(store)?;
 
         println!("\nReturned from `hello()` call: {f_hello_ret}");
     }
     {
-        let f_fib: TypedFunction<i32, i32> = runtime
-            .exports
-            .get_typed_function(&mut store, "fibonacci")?;
-        let f_fib = f_fib.call(&mut store, 15)?;
+        let f_fib: TypedFunction<i32, i32> =
+            runtime.exports.get_typed_function(store, "fibonacci")?;
+        let f_fib = f_fib.call(store, 15)?;
 
         println!("\nReturned from `fibonacci(15)` call: {f_fib}");
     }

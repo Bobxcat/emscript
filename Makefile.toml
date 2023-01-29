@@ -26,3 +26,8 @@ dependencies = [
 
 [tasks.build-all]
 dependencies = ["build-em"]
+
+[tasks.run-em]
+command = "cargo"
+args = ["run", "-p", "emscript"]
+dependencies = ["build-all"]

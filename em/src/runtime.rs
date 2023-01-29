@@ -8,16 +8,13 @@ use std::{
 };
 
 use anyhow::bail;
-use wasm_opt::OptimizationOptions;
-use wasmer::{
-    imports, Engine, Exports, Function, ImportObject, Instance, Memory, MemoryType, Module, Store,
-    Universal,
-};
+// use wasm_opt::OptimizationOptions;
+use wasmer::{imports, Engine, Exports, Function, Instance, Memory, MemoryType, Module, Store};
 
 use crate::{
     ast::{ASTNode, StringContext},
     // c_ast::{ast_to_cast, cast_to_string},
-    interface::Interface,
+    interface::InterfaceDef,
     tree::{NodeId, Tree},
     value::Type,
 };
@@ -114,7 +111,7 @@ impl MethodInfo {
 #[derive(Debug, Clone)]
 pub struct Runtime {
     pub cfg: RuntimeCfg,
-    interface: Interface,
+    interface: InterfaceDef,
     /// Each method declaration stored as a pair of (method_name, (method_declaration, method_body))
     // pub(crate) method_declarations: HashMap<String, MethodInfo>, //TODO: Define external methods, Rc<state>?
     target_path: PathBuf,
@@ -123,7 +120,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    fn new(cfg: RuntimeCfg, interface: Interface) -> Self {
+    fn new(cfg: RuntimeCfg, interface: InterfaceDef) -> Self {
         Self {
             cfg,
             interface,
@@ -136,7 +133,7 @@ impl Runtime {
     pub fn new_init(
         ast: &Tree<ASTNode>,
         cfg: RuntimeCfg,
-        interface: Interface,
+        interface: InterfaceDef,
     ) -> Result<Self, RuntimeErr> {
         let mut r = Self::new(cfg, interface);
         // r.init(ast)?;
@@ -281,55 +278,56 @@ impl Runtime {
             clang_handle.wait()?;
         }
 
-        //Optimize `c/main.wasm` and write the optimized wasm to `wasm/main.wasm`
-        {
-            let generated_wasm_path = self.c_dir.join(format!("main.wasm"));
-            let wasm_new_path = self.wasm_dir.join(format!("main.wasm"));
-            // std::fs::copy(&generated_wasm_path, &wasm_new_path)?;
-            let opt = match self.cfg.opt_level {
-                OptLevel::NoOpt => OptimizationOptions::new_opt_level_0(),
-                OptLevel::Debug => OptimizationOptions::new_opt_level_1(),
-                OptLevel::Release => OptimizationOptions::new_opt_level_4(),
-            };
+        Ok(todo!())
+        // //Optimize `c/main.wasm` and write the optimized wasm to `wasm/main.wasm`
+        // {
+        //     let generated_wasm_path = self.c_dir.join(format!("main.wasm"));
+        //     let wasm_new_path = self.wasm_dir.join(format!("main.wasm"));
+        //     // std::fs::copy(&generated_wasm_path, &wasm_new_path)?;
+        //     let opt = match self.cfg.opt_level {
+        //         OptLevel::NoOpt => OptimizationOptions::new_opt_level_0(),
+        //         OptLevel::Debug => OptimizationOptions::new_opt_level_1(),
+        //         OptLevel::Release => OptimizationOptions::new_opt_level_4(),
+        //     };
 
-            opt.run(generated_wasm_path, wasm_new_path.clone()).unwrap();
+        //     opt.run(generated_wasm_path, wasm_new_path.clone()).unwrap();
 
-            Ok(wasm_new_path)
-        }
+        //     Ok(wasm_new_path)
+        // }
     }
 
-    pub fn load_wasm<P>(self, wasm_path: P, store: Store) -> anyhow::Result<Instance>
-    where
-        P: AsRef<Path>,
-    {
-        //Define the WASM environment
-        let import_obj = {
-            let mut import_obj = ImportObject::new();
+    // pub fn load_wasm<P>(self, wasm_path: P, store: Store) -> anyhow::Result<Instance>
+    // where
+    //     P: AsRef<Path>,
+    // {
+    //     //Define the WASM environment
+    //     let import_obj = {
+    //         let mut import_obj = ImportObject::new();
 
-            //Create the namespace "env" and populate it using `interface`
-            let mut nm = Exports::new();
-            for (_, imp) in self.interface.wasm_imports {
-                nm.insert(imp.method_name, imp.f);
-            }
+    //         //Create the namespace "env" and populate it using `interface`
+    //         let mut nm = Exports::new();
+    //         for (_, imp) in self.interface.wasm_imports {
+    //             nm.insert(imp.method_name, imp.f);
+    //         }
 
-            import_obj.register("env", nm);
+    //         import_obj.register("env", nm);
 
-            import_obj
-        };
+    //         import_obj
+    //     };
 
-        //Load the WASM
-        let wasm_bytes = {
-            let mut buf = Vec::new();
-            File::open(wasm_path)?.read_to_end(&mut buf)?;
-            buf
-        };
+    //     //Load the WASM
+    //     let wasm_bytes = {
+    //         let mut buf = Vec::new();
+    //         File::open(wasm_path)?.read_to_end(&mut buf)?;
+    //         buf
+    //     };
 
-        //Define WASM runtime
-        let module = Module::new(&store, &wasm_bytes)?;
+    //     //Define WASM runtime
+    //     let module = Module::new(&store, &wasm_bytes)?;
 
-        //Finally, create the instance itself
-        let instance = Instance::new(&module, &import_obj)?;
+    //     //Finally, create the instance itself
+    //     let instance = Instance::new(&module, &import_obj)?;
 
-        Ok(instance)
-    }
+    //     Ok(instance)
+    // }
 }

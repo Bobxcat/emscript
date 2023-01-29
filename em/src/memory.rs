@@ -18,6 +18,17 @@ pub const MEM_ALLOC_NAME: &str = "malloc";
 pub const MEM_FREE_NAME: &str = "mfree";
 pub const MEM_REALLOC_NAME: &str = "mrealloc";
 
+pub fn wasm_value_to_mem_idx(val: wasmer::Value) -> MemoryIndex {
+    #[cfg(not(feature = "mem_64bit"))]
+    {
+        unsafe { std::mem::transmute(val.unwrap_i32()) }
+    }
+    #[cfg(feature = "mem_64bit")]
+    {
+        unsafe { std::mem::transmute(val.unwrap_i64()) }
+    }
+}
+
 /// A range of chunks representing `first..=last`
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,23 +69,23 @@ pub trait WAllocator {
     /// Allocates some memory of `size` contiguous bits with the given align.
     ///
     /// Returns the index of the first byte of allocated memory
-    fn malloc<T: Send>(
+    fn malloc(
         &mut self,
-        env: FunctionEnvMut<T>,
+        env: FunctionEnvMut<WasmEnv>,
         size: MemoryIndex,
         align: MemoryIndex,
     ) -> MemoryIndex;
     /// Given an allocated piece of memory with the given starting position, increase its size to `new_size`, moving the allocation if needed
     ///
     /// Returns the new index of the first bytes of the allocation. This may or may not be different than `loc`
-    fn mrealloc<T: Send>(
+    fn mrealloc(
         &mut self,
-        env: FunctionEnvMut<T>,
+        env: FunctionEnvMut<WasmEnv>,
         loc: MemoryIndex,
         new_size: MemoryIndex,
     ) -> MemoryIndex;
     /// Frees the given allocated memory, so that it may be used by in a future allocation
-    fn mfree<T: Send>(&mut self, env: FunctionEnvMut<T>, loc: MemoryIndex, size: MemoryIndex);
+    fn mfree(&mut self, env: FunctionEnvMut<WasmEnv>, loc: MemoryIndex, size: MemoryIndex);
 }
 
 #[derive(
@@ -134,11 +145,13 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         self.len += new_chunks;
         let len_bytes = (self.len.0 * CHUNK_SIZE) as u64;
 
-        let mem = env.data().memory.unwrap();
-        let view = mem.view(WasmEnv::store());
+        let mut store = WasmEnv::store();
+        let store = store.as_mut().unwrap();
+
+        let mem = env.data().memory.as_ref().unwrap();
+        let view = mem.view(store);
         while len_bytes < view.data_size() {
-            mem.grow(WasmEnv::store(), 1)
-                .expect("Memory failed to grow");
+            mem.grow(store, 1).expect("Memory failed to grow");
         }
     }
     /// Searches `allocated` for the given start index. Follows binary search rules, so
@@ -183,9 +196,9 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
 }
 
 impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE> {
-    fn malloc<T: Send>(
+    fn malloc(
         &mut self,
-        env: FunctionEnvMut<T>,
+        env: FunctionEnvMut<WasmEnv>,
         size: MemoryIndex,
         align: MemoryIndex,
     ) -> MemoryIndex {
@@ -234,9 +247,9 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
         loc + offset
     }
 
-    fn mrealloc<T: Send>(
+    fn mrealloc(
         &mut self,
-        env: FunctionEnvMut<T>,
+        env: FunctionEnvMut<WasmEnv>,
         loc: MemoryIndex,
         new_size: MemoryIndex,
     ) -> MemoryIndex {
@@ -284,7 +297,7 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
         todo!()
     }
 
-    fn mfree<T: Send>(&mut self, env: FunctionEnvMut<T>, loc: MemoryIndex, size: MemoryIndex) {
+    fn mfree(&mut self, env: FunctionEnvMut<WasmEnv>, loc: MemoryIndex, size: MemoryIndex) {
         // The chunk containing `loc`
         let chunk_start: ChunkIdx = ((loc) / CHUNK_SIZE).into();
         // The chunk containing `loc + size`

@@ -7,7 +7,7 @@ use std::{
 use once_cell::sync::Lazy;
 
 use crate::{
-    interface::Interface,
+    interface::InterfaceDef,
     ir::{IRNode, IRNodeType, IdentID, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::PREFIX_TMP,

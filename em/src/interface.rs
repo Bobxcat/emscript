@@ -11,11 +11,11 @@ use std::{
 use crate::{
     ast::StringContext,
     interface::parse_interface::Token,
-    memory::{WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
+    memory::{wasm_value_to_mem_idx, WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
     token::tokenize,
-    traits::GetRefFromMem,
     utils::MultiMap,
     value::{custom_types::str_to_type, CustomTypeId, Type, TypeOrName},
+    WasmEnv,
 };
 
 use em_core::memory::MemoryIndex;
@@ -222,13 +222,14 @@ pub enum StdImport {
     StdOut,
 }
 
+/// * `wasm_imports` - A mapping from the names of methods to their corresponding import
 #[derive(Debug, Default, Clone)]
-pub struct Interface {
+pub struct InterfaceDef {
     pub wasm_imports: HashMap<String, MethodImport>,
     std_imports: HashSet<StdImport>,
 }
 
-impl Interface {
+impl InterfaceDef {
     pub fn new() -> Self {
         let mut interface = Self::default();
 
@@ -281,12 +282,12 @@ impl Interface {
         }
     }
 
-    /// Returns an `imports` object defining every `wasm_import`
-    fn init_alloc(
+    /// Adds memory allocator functions to `wasm_imports` with functionality included
+    fn add_alloc_implementation(
         &mut self,
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-        imports: &mut Imports,
-        store: StoreMut<'_>,
+        // imports: &mut Imports,
+        // store: StoreMut<'_>,
         env: &FunctionEnv<WasmEnv>,
     ) {
         // let mem = instance.exports.get_memory("memory").unwrap();
@@ -302,6 +303,9 @@ impl Interface {
 
         let ptr_type = Type::ptr_type();
 
+        let mut store = WasmEnv::store();
+        let store = store.as_mut().unwrap();
+
         // `malloc`
         {
             let allocator = allocator.clone();
@@ -311,14 +315,19 @@ impl Interface {
                 params: vec![ptr_type.clone(), ptr_type.clone()],
                 ret: ptr_type.clone(),
                 f: Some(Function::new_with_env(
-                    store.borrow_mut(),
+                    store,
                     env,
                     MALLOC_SIGNATURE,
                     move |env: FunctionEnvMut<WasmEnv>, args: &[wasmer::Value]| {
-                        let m = env.data().memory.view(&store);
-                        let (size, align) = unsafe {
-                            std::mem::transmute((args[0].unwrap_i32(), args[1].unwrap_i32()))
-                        };
+                        let mut store = WasmEnv::store();
+                        let store = store.as_mut().unwrap();
+
+                        let m = env.data().memory.as_ref().unwrap().view(&store);
+
+                        let (size, align) = (
+                            wasm_value_to_mem_idx(args[0].clone()),
+                            wasm_value_to_mem_idx(args[1].clone()),
+                        );
                         let mut allocator = allocator.lock().expect("malloc failed to lock");
                         let ret = wasmer::Value::I32(unsafe {
                             std::mem::transmute(allocator.malloc(env, size, align))
@@ -328,21 +337,22 @@ impl Interface {
                     },
                 )),
             };
+
             if let Some(prev) = self.insert(imp) {
-                println!("importing `malloc` overrided the following import: {prev:#?}");
+                println!("importing `malloc` overrided the following import: {prev:#?} (this should be happen and should override a malloc declaration)");
             }
         }
     }
 
     /// Populates an instance's imports using this interface. This must be called before using an instance, just after its creation
     pub fn get_imports_obj(
-        self,
+        mut self,
         allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
-        instance: &mut Instance,
-        store: StoreMut<'_>,
-        functions: HashMap<String, Function>,
+        env: &FunctionEnv<WasmEnv>,
     ) -> Imports {
         let mut imports = Imports::default();
+
+        self.add_alloc_implementation(allocator, env);
 
         /// Inserts some number of method imports into the interface
         macro_rules! ins {
@@ -372,6 +382,9 @@ impl Interface {
             };
         }
 
+        let mut store = WasmEnv::store();
+        let store = store.as_mut().unwrap();
+
         //Loop through all the imports and add their corresponding implemenations
         for imp in self.std_imports {
             match imp {
@@ -386,11 +399,7 @@ impl Interface {
                     fn println(s: &str) {
                         println!("{s}")
                     }
-                    imports.define(
-                        "env",
-                        "print_num",
-                        Function::new_typed(store.borrow_mut(), print_num),
-                    );
+                    imports.define("env", "print_num", Function::new_typed(store, print_num));
                     // ins!(
                     //     new_imp!(
                     //         "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
@@ -402,22 +411,21 @@ impl Interface {
             };
         }
 
-        todo!()
-    }
+        // Register all `wasm_imports`
 
-    pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
-        self.wasm_imports.insert(imp.method_name.clone(), imp)
-    }
-
-    /// Registers all wasm imports into the given instance
-    fn register_all_wasm_imports(self, instance: &mut Instance) {
         for (name, imp) in self.wasm_imports {
             if let Some(f) = imp.f {
-                instance.exports.insert(name, f)
+                imports.define("env", &name, f);
             } else {
                 println!("Wasm import not registered since it lacked an implementation: {name}");
             }
         }
+
+        imports
+    }
+
+    pub fn insert(&mut self, imp: MethodImport) -> Option<MethodImport> {
+        self.wasm_imports.insert(imp.method_name.clone(), imp)
     }
 
     /// Verifies that `self` covers exactly `interface_decs`
@@ -443,7 +451,7 @@ impl Interface {
         } else {
             Ok(())
         }
-        // todo!("Interface::verify -- type checking")
+        // todo!("InterfaceDef::verify -- type checking")
     }
 }
 
@@ -490,7 +498,7 @@ fn token_to_interface_token(t: crate::parse::Token) -> Token {
 }
 
 /// Compile from the given api. The interface must cover all method exports
-pub fn compile_api(raw: &str, interface: Interface) -> anyhow::Result<Interface> {
+pub fn compile_api(raw: &str, interface: InterfaceDef) -> anyhow::Result<InterfaceDef> {
     let tokens = tokenize(raw)?;
 
     //Create parser and run it

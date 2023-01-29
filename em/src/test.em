@@ -28,6 +28,7 @@ fn foo(i32 n) -> i32 {
             break;
         }
         let i32 t = b;
+        //b = add(a, b);
         b = a + b;
         a = t;
         

@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
-    interface::Interface,
+    interface::InterfaceDef,
     tree::{Node, NodeId, Tree},
     utils::{format_compact, PREFIX_IDENT},
     value::{
@@ -251,7 +251,7 @@ impl IdentScopeStack {
 }
 
 impl IRAST {
-    pub fn from_ast(ast: &Tree<ASTNode>, interface: &Interface) -> anyhow::Result<Self> {
+    pub fn from_ast(ast: &Tree<ASTNode>, interface: &InterfaceDef) -> anyhow::Result<Self> {
         //First, create an empty identifier stack. Note that the scope must be increased before first use
         let mut ident_stack = IdentScopeStack::new();
 
@@ -321,7 +321,7 @@ impl IRAST {
         ast: &Tree<ASTNode>,
         curr: NodeId,
         ident_stack: &mut IdentScopeStack,
-        interface: &Interface,
+        interface: &InterfaceDef,
     ) -> anyhow::Result<Tree<IRNode>> {
         let children = ast[curr].children.clone();
         let mut ir_tree = Tree::new();
