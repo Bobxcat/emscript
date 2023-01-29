@@ -1,4 +1,4 @@
-use std::{fmt::Display, ops::Range};
+
 
 use pomelo::pomelo;
 
@@ -168,7 +168,6 @@ use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     prim_tree::PrimNode,
     tree::{NodeId, Tree},
-    value::Type,
 };
 
 fn set_scope_depths_recurse(ast: &mut Tree<ASTNode>, curr: NodeId, curr_scope: usize) {

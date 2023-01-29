@@ -5,15 +5,15 @@
 // use core::slice::SlicePattern;
 use std::{
     fs::File,
-    io::{stdout, Read, Write},
-    path::{Path, PathBuf},
+    io::{Read, Write},
+    path::PathBuf,
     str::FromStr,
     sync::{Arc, Mutex, MutexGuard},
     time::SystemTime,
 };
 
 use em_core::memory::MemoryIndex;
-use em_proc::generate_translation_with_sizes;
+
 use interface::InterfaceDef;
 use ir::IRAST;
 use once_cell::sync::Lazy;
@@ -22,22 +22,17 @@ use runtime::RuntimeCfg;
 use wabt::wat2wasm;
 // use runtime::RuntimeCfg;
 // use wabt::ReadBinaryOptions;
-use wasm::{compile_irast, WasmAST};
+use wasm::compile_irast;
 use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
-use wasmer::{
-    AsStoreMut, AsStoreRef, Exports, Function, FunctionEnv, FunctionEnvMut, Imports, Instance,
-    Memory, Module, Store, TypedFunction, WasmPtr,
-};
+use wasmer::{Function, FunctionEnv, Instance, Memory, Module, Store, TypedFunction};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport},
     memory::WAllocatorDefault,
-    runtime::Runtime,
     token::tokenize,
-    utils::time_dbg,
     value::{
-        custom_types::{custom_types, insert_custom_type, str_to_type},
+        custom_types::{insert_custom_type, str_to_type},
         CustomType, CustomTypeImpl, Type,
     },
 };
@@ -135,9 +130,9 @@ impl WasmEnv {
 /// * `implement_interface_methods` - A callback which is used to populate the method implementations of the given interface
 fn compile(
     raw: &str,
-    cfg: RuntimeCfg,
+    _cfg: RuntimeCfg,
     mut interface: InterfaceDef,
-    mut store: Store,
+    store: Store,
 
     implement_interface_methods: impl FnOnce(&mut InterfaceDef, &mut Store, &FunctionEnv<WasmEnv>),
 ) -> anyhow::Result<Instance> {
@@ -151,7 +146,7 @@ fn compile(
         // println!("\n==Tokens==\n{:#?}\n=========", tokens);
         return Err(anyhow::format_err!("AST parsing error encountered"));
     }
-    let mut ast = ast.unwrap();
+    let ast = ast.unwrap();
 
     let mut ir_ast = IRAST::from_ast(&ast, &interface)?;
     ir_ast.mangle(vec!["foo"].iter().map(|s| *s).collect());
@@ -253,7 +248,7 @@ fn compile(
                     if i >= n {
                         break;
                     }
-                    let mut t = b;
+                    let t = b;
                     //b = add(a, b);
                     b = a.wrapping_add(b);
                     a = t;
@@ -345,9 +340,9 @@ fn start() -> anyhow::Result<()> {
     );
     use runtime::OptLevel::*;
 
-    let alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
+    let _alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
-    let mut store = Store::default();
+    let store = Store::default();
 
     let interface = {
         use StdImport::*;
@@ -462,7 +457,7 @@ fn start() -> anyhow::Result<()> {
         interface,
         store,
         // Implement non-core custom methods
-        |interface, store, env| {
+        |interface, store, _env| {
             //`add`
             {
                 fn add(a: i32, b: i32) -> i32 {

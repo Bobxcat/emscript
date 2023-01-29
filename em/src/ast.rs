@@ -1,9 +1,9 @@
 use std::{
     fmt::Display,
-    ops::{Add, Div, Mul, Range, Sub},
+    ops::{Range},
 };
 
-use crate::value::{Type, TypeOrName, Value};
+use crate::value::{TypeOrName, Value};
 
 #[derive(Debug, Clone)]
 pub struct ASTNode {

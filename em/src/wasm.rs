@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt::{Debug, Display},
     sync::Mutex,
 };
@@ -7,18 +7,15 @@ use std::{
 use once_cell::sync::Lazy;
 
 use crate::{
-    interface::InterfaceDef,
-    ir::{IRNode, IRNodeType, IdentID, IdentInfo, IRAST},
+    ir::{IRNodeType, IdentInfo, IRAST},
     tree::{NodeId, Tree},
     utils::PREFIX_TMP,
-    value::{self, custom_types::custom_types, Value},
+    value::{self, Value},
 };
 
 use em_core::memory::MemoryIndex;
 
-/// The name of the function taking in a
-pub const MEM_ALLOC_NAME: &str = "malloc";
-
+/// The number of variables generated using `generate_tmp(..)`
 static TMP_VAR_COUNT: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
 
 fn generate_tmp() -> String {
@@ -28,6 +25,8 @@ fn generate_tmp() -> String {
 
     s
 }
+
+/// The number of variables generated using `generate_breakpoint_name(..)`
 static BREAKPOINT_COUNT: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
 
 fn generate_breakpoint_name() -> String {
@@ -70,7 +69,7 @@ impl Debug for WasmAST {
 
 impl Display for WasmAST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = wasm_ast_display_recurse(&self, self.tree.find_head().unwrap());
+        let s = wasm_ast_display_recurse(&self, self.tree.find_head().unwrap());
         // format_wat(&mut s);
         write!(f, "{}", s)
     }
@@ -160,7 +159,7 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
         End => format!("(end)"),
         Br(n) => format!("(br ${n})"),
 
-        MemAlloc(size) => format!("()"),
+        MemAlloc(_size) => format!("()"),
         // Get(t, s) => format!("({t}.load (global.get ${s}))\n"),
         // Set(t, s) => format!("({t}.store (global.get ${s}) {})\n", children!()),
         Load(t) => format!("({t}.load {})", children!()),

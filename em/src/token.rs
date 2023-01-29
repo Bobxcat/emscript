@@ -3,7 +3,7 @@ use std::{ops::Range, str::FromStr};
 use once_cell::sync::Lazy;
 use regex_lexer::{Lexer, LexerBuilder};
 
-use crate::{ast::StringContext, parse::Token, value::Type};
+use crate::{ast::StringContext, parse::Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TokenType {
@@ -59,7 +59,7 @@ where
     F: FromStr,
 {
     val.parse()
-        .map_err(|e| TokenizeError::FailedToParse { ctx })
+        .map_err(|_e| TokenizeError::FailedToParse { ctx })
 }
 
 impl TokenType {

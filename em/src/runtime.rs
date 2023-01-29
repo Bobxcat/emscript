@@ -1,15 +1,14 @@
 use std::{
-    collections::HashMap,
     fmt::Display,
-    fs::{canonicalize, DirBuilder, File},
-    io::{Read, Write},
+    fs::{canonicalize, DirBuilder},
+    io::{Write},
     path::{Path, PathBuf},
     process::Command,
 };
 
 use anyhow::bail;
 // use wasm_opt::OptimizationOptions;
-use wasmer::{imports, Engine, Exports, Function, Instance, Memory, MemoryType, Module, Store};
+
 
 use crate::{
     ast::{ASTNode, StringContext},
@@ -131,11 +130,11 @@ impl Runtime {
         }
     }
     pub fn new_init(
-        ast: &Tree<ASTNode>,
+        _ast: &Tree<ASTNode>,
         cfg: RuntimeCfg,
         interface: InterfaceDef,
     ) -> Result<Self, RuntimeErr> {
-        let mut r = Self::new(cfg, interface);
+        let r = Self::new(cfg, interface);
         // r.init(ast)?;
         Ok(r)
     }

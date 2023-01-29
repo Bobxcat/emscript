@@ -1,14 +1,10 @@
-use std::{
-    collections::HashMap,
-    ops::{Add, Range, RangeInclusive},
-    sync::Mutex,
-};
+use std::ops::{Add, Range, RangeInclusive};
 
-use derive_more::{Add, AddAssign, From, Neg, Not, Sub, SubAssign};
+use derive_more::{Add, AddAssign, From, Not, Sub, SubAssign};
 
 use em_core::memory::MemoryIndex;
-use once_cell::sync::Lazy;
-use wasmer::{FunctionEnvMut, Pages};
+
+use wasmer::FunctionEnvMut;
 
 use crate::WasmEnv;
 
@@ -249,7 +245,7 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
 
     fn mrealloc(
         &mut self,
-        env: FunctionEnvMut<WasmEnv>,
+        _env: FunctionEnvMut<WasmEnv>,
         loc: MemoryIndex,
         new_size: MemoryIndex,
     ) -> MemoryIndex {
@@ -297,19 +293,19 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
         todo!()
     }
 
-    fn mfree(&mut self, env: FunctionEnvMut<WasmEnv>, loc: MemoryIndex, size: MemoryIndex) {
+    fn mfree(&mut self, _env: FunctionEnvMut<WasmEnv>, loc: MemoryIndex, size: MemoryIndex) {
         // The chunk containing `loc`
         let chunk_start: ChunkIdx = ((loc) / CHUNK_SIZE).into();
         // The chunk containing `loc + size`
         let chunk_end: ChunkIdx = ((loc + size) / CHUNK_SIZE).into();
 
-        let idx = self
+        let _idx = self
             .search_allocated(chunk_start)
             .expect("Tried to free non-allocated memory chunk");
 
         // Generate the range of chunks which need to be freed
         let chunks = chunk_start..=chunk_end;
-        let chunks: ChunkRange = chunks.into();
+        let _chunks: ChunkRange = chunks.into();
 
         // In the case of one call freeing multiple allocations, this is not quite right
         // assert!(chunks.len() >= self.allocated[idx].len());

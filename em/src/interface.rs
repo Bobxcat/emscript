@@ -1,32 +1,22 @@
 use std::{
-    borrow::BorrowMut,
-    cell::RefCell,
     collections::{HashMap, HashSet},
     error::Error,
     fmt::Display,
-    rc::Rc,
     sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::{
     ast::StringContext,
     interface::parse_interface::Token,
-    memory::{wasm_value_to_mem_idx, WAllocator, MEM_ALLOC_NAME, MEM_REALLOC_NAME},
+    memory::{wasm_value_to_mem_idx, WAllocator, MEM_ALLOC_NAME},
     token::tokenize,
-    utils::MultiMap,
-    value::{custom_types::str_to_type, CustomTypeId, Type, TypeOrName},
+    value::{custom_types::str_to_type, Type},
     WasmEnv,
 };
 
-use em_core::memory::MemoryIndex;
-
-use em_proc::generate_translation_with_sizes;
 use once_cell::sync::Lazy;
 use pomelo::pomelo;
-use wasmer::{
-    Function, FunctionEnv, FunctionEnvMut, Imports, Instance, Memory, Store, StoreMut, StoreRef,
-    WasmPtr,
-};
+use wasmer::{Function, FunctionEnv, FunctionEnvMut, Imports};
 
 use self::parse_interface::Parser;
 
@@ -136,10 +126,10 @@ pomelo! {
         use crate::*;
         use ast::{ ASTNode, StringContext };
         use prim_tree::PrimNode;
-        use tree::Tree;
-        use value::{Type, TypeOrName};
-        use super::InterfaceMethodDec;
-        use super::InterfaceMethodType::*;
+
+
+
+
         use super::*;
     }
     %module parse_interface;
@@ -231,7 +221,7 @@ pub struct InterfaceDef {
 
 impl InterfaceDef {
     pub fn new() -> Self {
-        let mut interface = Self::default();
+        let interface = Self::default();
 
         // //`mrealloc`
         // {
@@ -322,7 +312,7 @@ impl InterfaceDef {
                         let mut store = WasmEnv::store();
                         let store = store.as_mut().unwrap();
 
-                        let m = env.data().memory.as_ref().unwrap().view(&store);
+                        let _m = env.data().memory.as_ref().unwrap().view(&store);
 
                         let (size, align) = (
                             wasm_value_to_mem_idx(args[0].clone()),

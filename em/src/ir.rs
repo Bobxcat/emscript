@@ -1,7 +1,5 @@
 use std::{
-    backtrace::Backtrace,
     collections::{HashMap, HashSet},
-    mem::{size_of, size_of_val},
     ops::Index,
 };
 
@@ -11,12 +9,12 @@ use crate::{
     tree::{Node, NodeId, Tree},
     utils::{format_compact, PREFIX_IDENT},
     value::{
-        custom_types::{custom_types, custom_types_mut, str_to_type},
+        custom_types::{custom_types, custom_types_mut},
         CustomTypeId, Type, TypeOrName, Value,
     },
     verify::VerificationError,
 };
-use crate::{value::TypeRestriction, verify::VerificationErrorType};
+use crate::{verify::VerificationErrorType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdentID(usize);
@@ -609,7 +607,7 @@ impl IRAST {
                 set_type!(t);
             }
             //For a field ref, just be sad
-            FieldRef(field) => {
+            FieldRef(_field) => {
                 todo!()
                 // if let Some(return_type) = return_type {}
                 // todo!()
@@ -732,7 +730,7 @@ impl IRAST {
                     }
                 }
 
-                let child_t = self.set_types_recurse(children[0], Some(Type::Void))?;
+                let _child_t = self.set_types_recurse(children[0], Some(Type::Void))?;
 
                 set_type!(Type::Void);
             }

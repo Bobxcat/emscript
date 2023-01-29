@@ -2,10 +2,9 @@ use std::{
     collections::HashMap,
     fmt::Display,
     ops::{Add, Div, Mul, Sub},
-    rc::Rc,
 };
 
-use em_core::memory::MemoryIndex;
+
 
 use crate::ast::ASTNodeType;
 
@@ -98,14 +97,14 @@ impl TypeRestriction {
                 (Int32, Int) => true,
                 (Int32, Int32) => todo!(),
                 //
-                (Custom(lhs), rhs) => todo!(),
-                (lhs, Custom(rhs)) => todo!(),
+                (Custom(_lhs), _rhs) => todo!(),
+                (_lhs, Custom(_rhs)) => todo!(),
                 //
                 (Ref(_), Int) => todo!(),
                 (Int, Ref(_)) => todo!(),
                 (Ref(_), Int32) => todo!(),
                 (Int32, Ref(_)) => todo!(),
-                (Ref(lhs), Ref(rhs)) => todo!(),
+                (Ref(_lhs), Ref(_rhs)) => todo!(),
                 _ => false,
             },
             TypeRestriction::CoercableTo(new_t) => {
