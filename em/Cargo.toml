@@ -24,7 +24,7 @@ anyhow = "1"
 bimap = "0.6.2"
 em_proc = { path = "../em_proc" }
 em_core = { path = "../em_core" }
-# wasm-opt = "0"
-# wabt = "0"
+wasm-opt = "0"
+wabt = "0"
 
 derive_more = "0"

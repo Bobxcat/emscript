@@ -24,7 +24,7 @@ fn foo(i32 n) -> i32 {
     let i32 i = 1i32;
 
     loop {
-        if i == n {
+        if i >= n {
             break;
         }
         let i32 t = b;

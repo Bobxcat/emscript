@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex, MutexGuard},
+    time::SystemTime,
 };
 
 use em_core::memory::MemoryIndex;
@@ -18,9 +19,11 @@ use ir::IRAST;
 use once_cell::sync::Lazy;
 use parse::parse;
 use runtime::RuntimeCfg;
+use wabt::wat2wasm;
 // use runtime::RuntimeCfg;
 // use wabt::ReadBinaryOptions;
 use wasm::{compile_irast, WasmAST};
+use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
 use wasmer::{
     AsStoreMut, AsStoreRef, Exports, Function, FunctionEnv, FunctionEnvMut, Imports, Instance,
@@ -166,31 +169,20 @@ fn compile(
     //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
     let mut store = WasmEnv::store();
 
-    let wasm = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
-    let wasm = &wasm.serialize().unwrap().to_vec();
-    // let wasm = &wabt::wat2wasm(wasm_txt)?[..];
-
-    // //Verify the wasm binary with wabt
-    // {
-    //     let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
-    //     module.validate()?;
-    // }
+    // let wasm = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
+    let wasm = &wat2wasm(wasm_txt)?;
 
     let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
-    println!("d");
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 1000000000;
+    const ARGS: i32 = 20000;
     //Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
-        println!("e");
         let module = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
-        println!("f");
 
         // Define the imports
-        // let mut imports = Imports::new();
 
         // Get the environment needed for all the methods
         let env = { FunctionEnv::new(store.as_mut().unwrap(), WasmEnv { memory: None }) };
@@ -210,147 +202,92 @@ fn compile(
 
         let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
 
-        //Finish populating `env`
+        // Finish populating `env`
         env.as_mut(store.as_mut().unwrap()).memory =
             Some(instance.exports.get_memory("memory")?.clone());
 
-        //
+        println!("Instance created. Now grabbing exported method `foo`");
 
-        todo!()
-        // Ok(instance)
-    }
-}
+        // Actually run the program
+        let foo: TypedFunction<i32, i32> = instance
+            .exports
+            .get_typed_function(store.as_ref().unwrap(), "foo")
+            .unwrap();
 
-#[cfg(not)]
-fn compile_text(
-    raw: &str,
-    cfg: RuntimeCfg,
-    interface: Interface,
-    store: Store,
-) -> anyhow::Result<Instance> {
-    //Build Token stream
-    let tokens = tokenize(raw)?;
+        println!("Export method `foo` found. Now calling `foo`");
+        let store = store.as_mut().unwrap();
 
-    //Build AST
-    let ast = parse(tokens.clone());
-    if let Err(_e) = ast {
-        // println!("\n==Tokens==\n{:#?}\n=========", tokens);
-        return Err(anyhow::format_err!("AST parsing error encountered"));
-    }
-    let mut ast = ast.unwrap();
+        let mut arr_1 = [0; ARGS as usize];
 
-    // println!("==AST==\n{}=======\n", ast);
-    // panic!();
+        {
+            let start = SystemTime::now();
 
-    //At this point, a runtime needs to be created to proceed
-    // let mut runtime = Runtime::new_init(&ast, cfg, interface).unwrap();
-
-    //Compile the AST to wasm
-
-    // runtime.setup_target_dir_relative("./em_target/").unwrap();
-
-    let mut ir_ast = IRAST::from_ast(&ast, &interface)?;
-    ir_ast.mangle(vec!["foo"].iter().map(|s| *s).collect());
-
-    let wasm_ast = compile_irast(&ir_ast)?;
-
-    println!("Generated wasm:\n{wasm_ast:?}");
-
-    let wasm_txt = &format!("{wasm_ast}");
-
-    let wasm_nofilter = &PathBuf::from_str("em_target/wasm/main_nofilter.wat")?;
-    File::create(&wasm_nofilter)?.write_all(wasm_txt.as_bytes())?;
-    //Turn the WASM text into a `.wasm` binary, which is smaller and such
-    //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
-    let wasm = &wabt::wat2wasm(wasm_txt)?[..];
-
-    //Verify the wasm binary with wabt
-    {
-        let module = wabt::Module::read_binary(wasm, &ReadBinaryOptions::default())?;
-        module.validate()?;
-    }
-
-    let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
-    File::create(&wasm_path_preopt)?.write_all(wasm)?;
-
-    let wasm_path_preopt_txt = &PathBuf::from_str("em_target/wasm/main_preopt.wat")?;
-    File::create(wasm_path_preopt_txt)?.write_all(wabt::wasm2wat(wasm)?.as_bytes())?;
-
-    let wasm_path = &PathBuf::from_str("em_target/wasm/main.wasm")?;
-
-    println!("=====Running unoptimized=====");
-    const ARGS: i32 = 1000000000;
-    //Run unoptimized
-    {
-        let instance = instance(wasm_path_preopt, &interface)?;
-
-        let foo: TypedFunction<i32, i32> =
-            instance.exports.get_typed_function(&mut store, "foo")?;
-
-        fn foo0(n: i32) -> i32 {
-            let mut a = 0;
-            let mut b = 1;
-
-            let mut i = 1;
-
-            loop {
-                if i == n {
-                    break;
-                }
-                let t = b;
-                b = a + b;
-                a = t;
-
-                i += 1;
+            for i in 0..ARGS {
+                let f = foo.call(store, i).unwrap();
+                arr_1[i as usize] = f;
+                // println!("{i}: {f}");
             }
 
-            b
+            println!(
+                "Time taken: {:?}\n",
+                SystemTime::now().duration_since(start)
+            );
         }
 
-        dbg!(time_dbg(|| foo0(ARGS)));
+        println!("Calling native method `foo`");
 
-        println!();
+        let mut arr_2 = [0; ARGS as usize];
 
-        // dbg!(foo.call(1)?);
-        // dbg!(foo.call(2)?);
+        {
+            let start = SystemTime::now();
 
-        // dbg!(foo.call(4)?);
-        dbg!(time_dbg(|| foo.call(&mut store, ARGS).unwrap()));
+            #[allow(arithmetic_overflow)]
+            #[inline(never)]
+            fn foo(n: i32) -> i32 {
+                let mut a = 0i32;
+                let mut b = 1i32;
+
+                let mut i = 1i32;
+
+                loop {
+                    if i >= n {
+                        break;
+                    }
+                    let mut t = b;
+                    //b = add(a, b);
+                    b = a.wrapping_add(b);
+                    a = t;
+
+                    i = i + 1i32;
+                }
+
+                b
+            }
+
+            for i in 0..ARGS {
+                let f = foo(i);
+                arr_2[i as usize] = f;
+                // println!("{i}: {f}");
+            }
+
+            println!(
+                "Time taken: {:?}\n",
+                SystemTime::now().duration_since(start)
+            );
+        }
+
+        assert_eq!(arr_1, arr_2);
+
+        // Finally, return the instance created after much effort
+        // Ok(instance)
     }
 
-    // Currently, the WASM is *already* being optimized, so this part is not useful
-    // Or, at the very least, the performance gain so far has been either negligable or negative
-    println!("\n\n=====Running optimized=====");
+    println!("=====Creating and writing optimized binary=====");
 
-    OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path)?;
+    let wasm_path_opt = &PathBuf::from_str("em_target/wasm/main.wasm")?;
+    OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path_opt)?;
 
-    let wasm_path_txt = &PathBuf::from_str("em_target/wasm/main.wat")?;
-    File::create(wasm_path_txt)?.write_all(
-        wabt::wasm2wat(
-            File::open(wasm_path_preopt)?
-                .bytes()
-                .collect::<Result<Vec<_>, _>>()?,
-        )?
-        .as_bytes(),
-    )?;
-
-    //Run optimized
-    {
-        let instance = instance(wasm_path, &interface)?;
-
-        let foo: TypedFunction<i32, i32> =
-            instance.exports.get_typed_function(&mut store, "foo")?;
-
-        // dbg!(foo.call(1)?);
-        // dbg!(foo.call(2)?);
-
-        // dbg!(foo.call(4)?);
-        // dbg!(foo.call(40)?);
-        dbg!(time_dbg(|| foo.call(&mut store, ARGS).unwrap()));
-    }
-
-    println!("\n\nfinished");
-    loop {}
+    todo!()
 }
 
 //TODO:
@@ -577,12 +514,12 @@ fn start() -> anyhow::Result<()> {
     let mut store = WasmEnv::store();
     let store = store.as_mut().unwrap();
 
-    {
-        let f_hello: TypedFunction<(), i32> = runtime.exports.get_typed_function(store, "hello")?;
-        let f_hello_ret = f_hello.call(store)?;
+    // {
+    //     let f_hello: TypedFunction<(), i32> = runtime.exports.get_typed_function(store, "hello")?;
+    //     let f_hello_ret = f_hello.call(store)?;
 
-        println!("\nReturned from `hello()` call: {f_hello_ret}");
-    }
+    //     println!("\nReturned from `hello()` call: {f_hello_ret}");
+    // }
     {
         let f_fib: TypedFunction<i32, i32> =
             runtime.exports.get_typed_function(store, "fibonacci")?;
