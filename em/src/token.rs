@@ -175,7 +175,7 @@ static LEXER: Lazy<Lexer<TokenType>> = Lazy::new(|| {
         .expect("Lexer failed to build")
 });
 
-/// Does trivial parsing, such as collapsing "ident `(` `)`" into `MethodCall`
+/// Does trivial parsing, such as collapsing "ident `(`" into `MethodCallStart`
 fn pre_parse(
     tokens: Vec<regex_lexer::Token<TokenType>>,
 ) -> Result<Vec<regex_lexer::Token<TokenType>>, TokenizeError> {
@@ -195,7 +195,7 @@ fn pre_parse(
             if i + pattern.len() > tokens.len() {
                 continue;
             }
-            //
+
             let mut is_match = true;
             for pattern_idx in 0..pattern.len() {
                 let pattern_tok = pattern[pattern_idx];
@@ -232,12 +232,31 @@ fn pre_parse(
     Ok(out_tokens)
 }
 
+/// Handles turning `Reference, Ident("{name}")` into `Ident("&{name}")`
+fn handle_ident_refs(tokens: &mut Vec<Token>) {
+    let mut i = 0;
+
+    while i < tokens.len() {
+        let tok = tokens[i].clone();
+        match tok {
+            Token::Ampersand(_ctx) => {
+                if let Some(Token::Ident((ctx, name))) = tokens.get(i + 1).clone() {
+                    tokens[i + 1] = Token::Ident((ctx.clone(), format!("&{name}")));
+                    tokens.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+}
+
 pub fn tokenize(input: &str) -> Result<Vec<Token>, TokenizeError> {
-    let token_types: Vec<_> = LEXER.tokens(input).collect();
+    let mut tokens = {
+        let token_types: Vec<_> = LEXER.tokens(input).collect();
+        let token_types = pre_parse(token_types)?;
 
-    let token_types = pre_parse(token_types)?;
-
-    let tokens = {
         token_types
             .into_iter()
             .map(|tok| {
@@ -246,6 +265,8 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, TokenizeError> {
             })
             .collect::<Result<_, _>>()?
     };
+
+    handle_ident_refs(&mut tokens);
 
     Ok(tokens)
 }

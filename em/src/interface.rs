@@ -8,8 +8,11 @@ use std::{
 use crate::{
     ast::StringContext,
     interface::parse_interface::Token,
-    memory::{wasm_value_to_mem_idx, WAllocator, MEM_ALLOC_NAME},
+    memory::{
+        mem_idx_to_wasm_value, wasm_value_to_mem_idx, StackAllocator, WAllocator, STACK_SIZE,
+    },
     token::tokenize,
+    utils::{MEM_ALLOC_NAME, STACK_ALLOC_NAME},
     value::{custom_types::str_to_type, Type},
     WasmEnv,
 };
@@ -220,52 +223,84 @@ pub struct InterfaceDef {
 }
 
 impl InterfaceDef {
+    const MALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+        ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+
+    const MREALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+        ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+
+    const MFREE_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
+        ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+
+    const STACKALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) = Self::MALLOC_SIGNATURE;
+
     pub fn new() -> Self {
-        let interface = Self::default();
+        let mut s = Self::default();
 
-        // //`mrealloc`
-        // {
-        //     let allocator = allocator.clone();
-        //     let imp = MethodImport {
-        //         mod_name: "env".to_string(),
-        //         method_name: MEM_REALLOC_NAME.to_string(),
-        //         params: vec![ptr_type.clone(), ptr_type.clone()],
-        //         ret: ptr_type.clone(),
-        //         f: Function::new_typed_with_env(
-        //             &store,
-        //             env.clone(),
-        //             move |env: &WasmEnv, loc: MemoryIndex, new_size: MemoryIndex| -> MemoryIndex {
-        //                 let mut allocator = allocator.lock().expect("mrealloc failed to lock");
-        //                 allocator.mrealloc(env, loc, new_size)
-        //             },
-        //         ),
-        //     };
-        //     interface.insert(imp);
-        // }
+        let ptr_type = Type::ptr_type();
 
-        // //`mfree`
-        // {
-        //     let allocator = allocator.clone();
-        //     let imp = MethodImport {
-        //         mod_name: "env".to_string(),
-        //         method_name: MEM_REALLOC_NAME.to_string(),
-        //         params: vec![ptr_type.clone(), ptr_type.clone()],
-        //         ret: Type::Void,
-        //         f: Function::new_typed_with_env(
-        //             &store,
-        //             env.clone(),
-        //             move |env: &WasmEnv, loc: MemoryIndex, size: MemoryIndex| {
-        //                 let mut allocator = allocator.lock().expect("mrealloc failed to lock");
-        //                 allocator.mfree(env, loc, size)
-        //             },
-        //         ),
-        //     };
-        //     interface.insert(imp);
-        // }
+        // malloc
+        {
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: MEM_ALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: ptr_type.clone(),
+                f: None,
+            };
+            s.insert(imp);
+        }
 
-        interface
+        // stack_alloc
+        {
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: STACK_ALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: ptr_type.clone(),
+                f: None,
+            };
+            s.insert(imp);
+        }
+
+        s
     }
     pub fn new_with_std(std_imps: HashSet<StdImport>) -> Self {
+        // Create self using `new` in order to define memory functionality
+        let mut s = Self::new();
+
+        // Loop through all the imports and add their corresponding declarations
+        for imp in &std_imps {
+            match imp {
+                //StdOut, such as `print` and `print_num`
+                StdImport::StdOut => {
+                    s.insert(MethodImport {
+                        mod_name: "env".into(),
+                        method_name: "print_num".into(),
+                        params: vec![Type::Int32],
+                        ret: Type::Void,
+                        f: None,
+                    });
+
+                    // s.insert(MethodImport {
+                    //     mod_name: "env".into(),
+                    //     method_name: "print".into(),
+                    //     params: vec![Type::Int32],
+                    //     ret: Type::Void,
+                    //     f: None,
+                    // });
+
+                    // s.insert(MethodImport {
+                    //     mod_name: "env".into(),
+                    //     method_name: "println".into(),
+                    //     params: vec![Type::Ref(Box::new(Type::Int32))],
+                    //     ret: Type::Void,
+                    //     f: None,
+                    // });
+                }
+            };
+        }
+
         Self {
             wasm_imports: Default::default(),
             std_imports: std_imps,
@@ -275,21 +310,15 @@ impl InterfaceDef {
     /// Adds memory allocator functions to `wasm_imports` with functionality included
     fn add_alloc_implementation(
         &mut self,
-        allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
+        allocator: Arc<Mutex<impl WAllocator<STACK_SIZE> + Sync + Send + 'static>>,
         // imports: &mut Imports,
         // store: StoreMut<'_>,
         env: &FunctionEnv<WasmEnv>,
     ) {
-        // let mem = instance.exports.get_memory("memory").unwrap();
-        //
-        const MALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
-            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
-
-        const MREALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
-            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
-
-        const MFREE_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) =
-            ([wasmer::Type::I32, wasmer::Type::I32], [wasmer::Type::I32]);
+        // IMPORTANT NOTE:
+        // - As of right now, the following will happen:
+        //   - The memory allocator does *not* account for offset when growing, which is dangerous
+        //     (this means some malloced memory may not be malloced)
 
         let ptr_type = Type::ptr_type();
 
@@ -307,23 +336,17 @@ impl InterfaceDef {
                 f: Some(Function::new_with_env(
                     store,
                     env,
-                    MALLOC_SIGNATURE,
+                    Self::MALLOC_SIGNATURE,
                     move |env: FunctionEnvMut<WasmEnv>, args: &[wasmer::Value]| {
-                        let mut store = WasmEnv::store();
-                        let store = store.as_mut().unwrap();
-
-                        let _m = env.data().memory.as_ref().unwrap().view(&store);
-
                         let (size, align) = (
                             wasm_value_to_mem_idx(args[0].clone()),
                             wasm_value_to_mem_idx(args[1].clone()),
                         );
                         let mut allocator = allocator.lock().expect("malloc failed to lock");
-                        let ret = wasmer::Value::I32(unsafe {
-                            std::mem::transmute(allocator.malloc(env, size, align))
-                        });
+                        // IMPORTANT: add the stack size
+                        let ret = allocator.malloc(env, size, align) + STACK_SIZE;
 
-                        Ok(vec![ret])
+                        Ok(vec![mem_idx_to_wasm_value(ret)])
                     },
                 )),
             };
@@ -332,12 +355,43 @@ impl InterfaceDef {
                 println!("importing `malloc` overrided the following import: {prev:#?} (this should be happen and should override a malloc declaration)");
             }
         }
+
+        let stack_allocator = Arc::new(Mutex::new(StackAllocator::new(STACK_SIZE)));
+
+        // `stack_alloc`
+        {
+            let allocator = stack_allocator.clone();
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: STACK_ALLOC_NAME.to_string(),
+                params: vec![ptr_type.clone(), ptr_type.clone()],
+                ret: ptr_type.clone(),
+                f: Some(Function::new(
+                    store,
+                    Self::STACKALLOC_SIGNATURE,
+                    move |args: &[wasmer::Value]| {
+                        let (size, align) = (
+                            wasm_value_to_mem_idx(args[0].clone()),
+                            wasm_value_to_mem_idx(args[1].clone()),
+                        );
+                        let mut allocator = allocator.lock().expect("stack_alloc failed to lock");
+                        let ret = allocator.alloc(size, align);
+
+                        Ok(vec![mem_idx_to_wasm_value(ret)])
+                    },
+                )),
+            };
+
+            if let Some(prev) = self.insert(imp) {
+                println!("importing `stack_alloc` overrided the following import: {prev:#?} (this should be happen and should override a stack_alloc declaration)");
+            }
+        }
     }
 
     /// Populates an instance's imports using this interface. This must be called before using an instance, just after its creation
     pub fn get_imports_obj(
         mut self,
-        allocator: Arc<Mutex<impl WAllocator + Sync + Send + 'static>>,
+        allocator: Arc<Mutex<impl WAllocator<STACK_SIZE> + Sync + Send + 'static>>,
         env: &FunctionEnv<WasmEnv>,
     ) -> Imports {
         let mut imports = Imports::default();
@@ -376,7 +430,7 @@ impl InterfaceDef {
         let store = store.as_mut().unwrap();
 
         //Loop through all the imports and add their corresponding implemenations
-        for imp in self.std_imports {
+        for imp in self.std_imports.clone() {
             match imp {
                 //StdOut, such as `print` and `print_num`
                 StdImport::StdOut => {
@@ -389,14 +443,13 @@ impl InterfaceDef {
                     fn println(s: &str) {
                         println!("{s}")
                     }
-                    imports.define("env", "print_num", Function::new_typed(store, print_num));
-                    // ins!(
-                    //     new_imp!(
-                    //         "env", "print_num", vec![Type::Int32], Type::Void, fn c_print_num(i32); (1)
-                    //     ),
-                    //     new_imp!("env", "print", vec![Type::Int32], Type::Void, fn c_print(&str); (1)),
-                    //     new_imp!("env", "println", vec![Type::Int32], Type::Void, fn c_println(&str); (1))
-                    // );
+                    self.insert(MethodImport {
+                        mod_name: "env".into(),
+                        method_name: "print_num".into(),
+                        params: vec![Type::Int32],
+                        ret: Type::Void,
+                        f: Some(Function::new_typed(store, print_num)),
+                    });
                 }
             };
         }

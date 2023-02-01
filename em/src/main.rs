@@ -14,6 +14,7 @@ use std::{
 
 use em_core::memory::MemoryIndex;
 
+use em_mem::{EmMem, EmMemHandle};
 use interface::InterfaceDef;
 use ir::IRAST;
 use once_cell::sync::Lazy;
@@ -25,7 +26,8 @@ use wabt::wat2wasm;
 use wasm::compile_irast;
 use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
-use wasmer::{Function, FunctionEnv, Instance, Memory, Module, Store, TypedFunction};
+use wasmer::{Function, FunctionEnv, Instance, Memory, MemoryType, Module, Store, TypedFunction};
+use wasmer_vm::{LinearMemory, VMMemory};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport},
@@ -48,6 +50,8 @@ extern crate bimap;
 
 mod ast;
 mod c_ast;
+/// The implementation of a custom `LinearMemory` for
+mod em_mem;
 mod interface;
 mod ir;
 mod memory;
@@ -114,12 +118,15 @@ mod wasm;
 static WASM_STORE: Lazy<Mutex<Option<Store>>> = Lazy::new(|| Mutex::new(None));
 
 pub struct WasmEnv {
-    pub memory: Option<Memory>,
+    pub memory: EmMemHandle,
 }
 
 impl WasmEnv {
     pub fn store() -> MutexGuard<'static, Option<Store>> {
         WASM_STORE.lock().unwrap()
+    }
+    pub fn mem<'a>(&'a self) -> MutexGuard<'a, EmMem> {
+        self.memory.lock()
     }
 }
 
@@ -133,6 +140,7 @@ fn compile(
     _cfg: RuntimeCfg,
     mut interface: InterfaceDef,
     store: Store,
+    memory: EmMemHandle,
 
     implement_interface_methods: impl FnOnce(&mut InterfaceDef, &mut Store, &FunctionEnv<WasmEnv>),
 ) -> anyhow::Result<Instance> {
@@ -160,11 +168,10 @@ fn compile(
     let wasm_nofilter = &PathBuf::from_str("em_target/wasm/main_nofilter.wat")?;
     File::create(&wasm_nofilter)?.write_all(wasm_txt.as_bytes())?;
 
-    //Turn the WASM text into a `.wasm` binary, which is smaller and such
-    //(also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
+    // Turn the WASM text into a `.wasm` binary, which is smaller and such
+    // (also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
     let mut store = WasmEnv::store();
 
-    // let wasm = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
     let wasm = &wat2wasm(wasm_txt)?;
 
     let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
@@ -172,15 +179,25 @@ fn compile(
 
     println!("=====Running unoptimized=====");
     const ARGS: i32 = 20000;
-    //Run unoptimized
+    // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
         let module = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
 
+        // // Create the memory and add it to the module
+        // let memory = EmMemHandle::new(EmMem::new());
+
         // Define the imports
 
         // Get the environment needed for all the methods
-        let env = { FunctionEnv::new(store.as_mut().unwrap(), WasmEnv { memory: None }) };
+        let env = {
+            FunctionEnv::new(
+                store.as_mut().unwrap(),
+                WasmEnv {
+                    memory: memory.clone(),
+                },
+            )
+        };
 
         // Populate `interface` with method implementations
         implement_interface_methods(&mut interface, store.as_mut().unwrap(), &env);
@@ -197,9 +214,9 @@ fn compile(
 
         let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
 
-        // Finish populating `env`
-        env.as_mut(store.as_mut().unwrap()).memory =
-            Some(instance.exports.get_memory("memory")?.clone());
+        // // Finish populating `env`
+        // env.as_mut(store.as_mut().unwrap()).memory =
+        //     Some(instance.exports.get_memory("memory")?.clone());
 
         println!("Instance created. Now grabbing exported method `foo`");
 
@@ -342,7 +359,15 @@ fn start() -> anyhow::Result<()> {
 
     let _alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
-    let store = Store::default();
+    let mem = EmMemHandle::new(EmMem::new());
+
+    let mut store = Store::default();
+
+    // Create a memory using the appropriate handle
+    {
+        let mem_box = Box::new(mem.clone()) as Box<(dyn LinearMemory + 'static)>;
+        Memory::new_from_existing(&mut store, VMMemory::from_custom(mem_box));
+    }
 
     let interface = {
         use StdImport::*;
@@ -456,6 +481,7 @@ fn start() -> anyhow::Result<()> {
         },
         interface,
         store,
+        mem.clone(),
         // Implement non-core custom methods
         |interface, store, _env| {
             //`add`

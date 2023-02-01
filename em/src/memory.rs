@@ -1,18 +1,20 @@
-use std::ops::{Add, Range, RangeInclusive};
+use std::ops::{Range, RangeInclusive};
 
 use derive_more::{Add, AddAssign, From, Not, Sub, SubAssign};
 
 use em_core::memory::MemoryIndex;
 
 use wasmer::FunctionEnvMut;
+use wasmer_vm::LinearMemory;
 
 use crate::WasmEnv;
 
-const PAGE_SIZE: u64 = u32::MAX as u64 + 1;
+/// The size of the stack, which does not grow
+///
+/// Currently set to `1 MB`
+pub const STACK_SIZE: MemoryIndex = 1024 * 1024;
 
-pub const MEM_ALLOC_NAME: &str = "malloc";
-pub const MEM_FREE_NAME: &str = "mfree";
-pub const MEM_REALLOC_NAME: &str = "mrealloc";
+const PAGE_SIZE: u64 = u32::MAX as u64 + 1;
 
 pub fn wasm_value_to_mem_idx(val: wasmer::Value) -> MemoryIndex {
     #[cfg(not(feature = "mem_64bit"))]
@@ -22,6 +24,17 @@ pub fn wasm_value_to_mem_idx(val: wasmer::Value) -> MemoryIndex {
     #[cfg(feature = "mem_64bit")]
     {
         unsafe { std::mem::transmute(val.unwrap_i64()) }
+    }
+}
+
+pub fn mem_idx_to_wasm_value(idx: MemoryIndex) -> wasmer::Value {
+    #[cfg(not(feature = "mem_64bit"))]
+    {
+        wasmer::Value::I32(unsafe { std::mem::transmute(idx) })
+    }
+    #[cfg(feature = "mem_64bit")]
+    {
+        wasmer::Value::I64(unsafe { std::mem::transmute(idx) })
     }
 }
 
@@ -61,7 +74,7 @@ impl From<RangeInclusive<ChunkIdx>> for ChunkRange {
     }
 }
 
-pub trait WAllocator {
+pub trait WAllocator<const BASE: MemoryIndex> {
     /// Allocates some memory of `size` contiguous bits with the given align.
     ///
     /// Returns the index of the first byte of allocated memory
@@ -144,10 +157,11 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         let mut store = WasmEnv::store();
         let store = store.as_mut().unwrap();
 
-        let mem = env.data().memory.as_ref().unwrap();
-        let view = mem.view(store);
-        while len_bytes < view.data_size() {
-            mem.grow(store, 1).expect("Memory failed to grow");
+        let mut mem = env.data().memory.lock();
+
+        // let view = mem.view(store);
+        while len_bytes < mem.size().bytes().0 as u64 {
+            mem.grow(1.into()).expect("Memory failed to grow");
         }
     }
     /// Searches `allocated` for the given start index. Follows binary search rules, so
@@ -191,7 +205,9 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
     }
 }
 
-impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE> {
+impl<const CHUNK_SIZE: MemoryIndex, const BASE: MemoryIndex> WAllocator<BASE>
+    for WAllocatorDefault<CHUNK_SIZE>
+{
     fn malloc(
         &mut self,
         env: FunctionEnvMut<WasmEnv>,
@@ -315,5 +331,57 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocator for WAllocatorDefault<CHUNK_SIZE>
 
         //
         todo!()
+    }
+}
+
+/// Represents the allocator used to control stack allocations.
+/// This struct is given some number of contiguous bytes pre-allocated at the start of the memory
+pub(crate) struct StackAllocator {
+    /// The stack size in bytes
+    stack_size: MemoryIndex,
+    /// The active allocations on the stack
+    allocations: Vec<RangeInclusive<MemoryIndex>>,
+    /// The current end of the stack pointer
+    stack_ptr: MemoryIndex,
+}
+
+impl StackAllocator {
+    pub fn new(stack_size: MemoryIndex) -> Self {
+        Self {
+            stack_size,
+            allocations: Vec::new(),
+            stack_ptr: 0,
+        }
+    }
+    pub const fn stack_ptr(&self) -> MemoryIndex {
+        self.stack_ptr
+    }
+    /// Allocates `size` contiguous bytes with the given alignment and returns
+    /// a pointer to the start of the allocation
+    pub fn alloc(&mut self, size: MemoryIndex, align: MemoryIndex) -> MemoryIndex {
+        let offset = self.stack_ptr % align;
+
+        let alloc_start = self.stack_ptr + offset;
+        let allocation = alloc_start..=(alloc_start + size);
+
+        self.allocations.push(allocation);
+
+        alloc_start
+    }
+    /// Removes the most recent allocation on the stack
+    pub fn pop(&mut self) {
+        let allocation = self
+            .allocations
+            .pop()
+            .expect("Popped value off of empty stack");
+
+        let allocation_start = *allocation.start();
+        self.stack_ptr = allocation_start;
+    }
+    /// Removes the `n` most recent allocations on the stack
+    pub fn pop_n(&mut self, n: MemoryIndex) {
+        for _ in 0..n {
+            self.pop();
+        }
     }
 }

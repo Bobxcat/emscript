@@ -3,10 +3,11 @@ use std::{
     fmt::Debug,
     hash::Hash,
     ops::{Index, IndexMut},
-    time::{SystemTime},
+    time::SystemTime,
 };
 
-use bimap::{BiHashMap};
+use bimap::BiHashMap;
+use once_cell::sync::Lazy;
 
 //Note about prefixes:
 //- Should have a max length of `10`, so that the formatted variable ID (which has a max length of `22`)
@@ -17,6 +18,18 @@ pub const PREFIX_TMP: &str = "i_tmp";
 //Prefix identifiers should have the most underscores, since user-provided idents can start with underscores
 //(For example, naming your variable `_tmp20` shouldn't interfere with anything)
 pub const PREFIX_IDENT: &str = "i_________"; //length 10
+
+/// Prefix for host instrinsics, such as `malloc` and `stack_alloc`
+pub const PREFIX_HOST_INTRINSIC: &str = "host_";
+
+pub static MEM_ALLOC_NAME: Lazy<String> = Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}malloc"));
+pub const MEM_FREE_NAME: Lazy<String> = Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}mfree"));
+pub const MEM_REALLOC_NAME: Lazy<String> = Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}mrealloc"));
+
+pub const STACK_ALLOC_NAME: Lazy<String> =
+    Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}stackalloc"));
+
+pub const STACK_POP_NAME: Lazy<String> = Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}stackpop"));
 
 /// Formats `n` as a base 62 string using the following values:
 /// `0-9`, `A-Z`, `a-z`

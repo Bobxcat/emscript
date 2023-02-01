@@ -4,8 +4,6 @@ use std::{
     ops::{Add, Div, Mul, Sub},
 };
 
-
-
 use crate::ast::ASTNodeType;
 
 pub mod custom_types {
@@ -32,13 +30,37 @@ pub mod custom_types {
     }
 
     pub fn str_to_type(s: &str) -> Option<Type> {
+        // Handle references (i.e. `&{type}`) before parsing
+        // Note that this will need to become more sophisticated when generics become a thing
+
+        // The number of references attached to the type
+        let mut num_references = 0;
+
+        let mut s = s.to_string();
+
+        while &s[0..1] == "&" {
+            let ch = s.remove(0);
+            assert_eq!(ch, '&');
+            num_references += 1;
+        }
+
+        let s = &s;
+
+        // Parse the rest of the type normally
         let t = TypeOrName::from_str(s);
         let custom_types = custom_types();
 
-        match t {
+        let mut t = match t {
             TypeOrName::T(t) => Some(t),
             TypeOrName::Name(s) => custom_types.get_k_from_v(&s).map(|id| Type::Custom(*id)),
+        }?;
+
+        // Apply the references
+        for _ in 0..num_references {
+            t = Type::Ref(Box::new(t));
         }
+
+        Some(t)
     }
 
     pub fn insert_custom_type(t: CustomType) -> Option<CustomType> {

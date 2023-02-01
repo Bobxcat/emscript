@@ -3,6 +3,7 @@ use std::{
     ops::Index,
 };
 
+use crate::verify::VerificationErrorType;
 use crate::{
     ast::{ASTNode, ASTNodeType, StringContext},
     interface::InterfaceDef,
@@ -14,7 +15,6 @@ use crate::{
     },
     verify::VerificationError,
 };
-use crate::{verify::VerificationErrorType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IdentID(usize);
@@ -365,14 +365,31 @@ impl IRAST {
                 }}};
         }
 
-        /// Extracts a type from an inputted `TypeOrName` value or returns an `Err` out of the containing method if failed
+        /// Extracts a type from the given `TypeOrName` value or returns an `Err` out of the containing method if failed
+        ///
+        /// Note that this macro is the worst and should be removed at some point
+        /// (along with reworking types to use the global `CustomTypes`)
         macro_rules! type_or_name_to_type {
             ($t:expr) => {
                 match $t {
                     TypeOrName::T(t) => t.clone(),
                     //When recieving a custom type, get the underlying type via the `IdentStack`
                     TypeOrName::Name(type_name) => {
-                        if let Some(id) = ident_stack.get_ident_from_name(type_name) {
+                        let mut num_references = 0;
+                        let mut type_name = type_name.to_string();
+
+                        // println!("{type_name}");
+
+                        while &type_name[0..1] == "&" {
+                            type_name.remove(0);
+                            num_references += 1;
+                        }
+
+                        let type_name = &type_name;
+
+                        // println!("{type_name}\n");
+
+                        let mut t = if let Some(id) = ident_stack.get_ident_from_name(type_name) {
                             match &ident_stack.global_idents[&id] {
                                 IdentInfo::CustomType {id, ..} => Type::Custom(*id),
                                 _ => return Err(anyhow::format_err!("Identifier encountered which was expected to be a custom type but was instead `{:?}`\n{}\n",
@@ -380,9 +397,23 @@ impl IRAST {
                             ))
                             }
                         } else {
-                            return Err(anyhow::format_err!("`TypeOrName` ecountered but not found in `IdentStack`:\n{}\n",
-                            &ast[curr].data.context))
+                            // Check again to make sure it's not a builtin, since indirection could've been just realized
+
+                            let t = TypeOrName::from_str(type_name);
+
+                            if let TypeOrName::T(s) = t {
+                                s
+                            } else {
+                                return Err(anyhow::format_err!("`TypeOrName` ecountered but not found in `IdentStack`:\n{}\n",
+                                &ast[curr].data.context))
+                            }
+                        };
+
+                        for _ in 0..num_references {
+                            t = Type::Ref(Box::new(t));
                         }
+
+                        t
                     }
                 }
             };
@@ -558,22 +589,6 @@ impl IRAST {
             };
         }
 
-        // /// Returns a type restriction mismatch error
-        // ///
-        // /// * `restriction`
-        // /// * `t`
-        // macro_rules! restriction_mismatch {
-        //     ($restriction:expr, $t:expr) => {
-        //         return Err(VerificationError::new(
-        //             self.tree[curr].data.ctx.clone(),
-        //             VerificationErrorType::RestrictionUnsatisfied {
-        //                 restriction: $restriction,
-        //                 t: $t,
-        //             },
-        //         ))
-        //     };
-        // }
-
         /// Sets the type of the current node
         macro_rules! set_type {
             ($t:expr) => {
@@ -680,6 +695,8 @@ impl IRAST {
                     Some(Type::Ref(t)) => {
                         let child_t = self.set_types_recurse(children[0], Some(*t.clone()))?;
 
+                        println!("{t} -> {child_t}");
+
                         if *t != child_t {
                             type_mismatch!(*t, child_t);
                         }
@@ -687,6 +704,7 @@ impl IRAST {
                         child_t
                     }
                     None => self.set_types_recurse(children[0], None)?,
+
                     t => type_mismatch!(t.unwrap(), Type::Ref(Box::new(Type::Void))),
                 };
 
@@ -764,12 +782,14 @@ impl IRAST {
                 //Do the last child first
                 //Pop the last child so the other children can be iterated through later
                 let last = children.pop().unwrap();
-                self.set_types_recurse(last, return_type)?;
+                let t = self.set_types_recurse(last, return_type)?;
 
                 //Iterate through all other children with `Void`
                 for c in children {
                     self.set_types_recurse(c, Some(Type::Void))?;
                 }
+
+                set_type!(t);
             }
             ValueConsume => {
                 if let Some(return_type) = return_type {

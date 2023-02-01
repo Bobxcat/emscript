@@ -9,7 +9,7 @@ use once_cell::sync::Lazy;
 use crate::{
     ir::{IRNodeType, IdentInfo, IRAST},
     tree::{NodeId, Tree},
-    utils::PREFIX_TMP,
+    utils::{MEM_ALLOC_NAME, PREFIX_TMP},
     value::{self, Value},
 };
 
@@ -26,7 +26,7 @@ fn generate_tmp() -> String {
     s
 }
 
-/// The number of variables generated using `generate_breakpoint_name(..)`
+/// The number of variables generated so far using `generate_breakpoint_name(..)`
 static BREAKPOINT_COUNT: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
 
 fn generate_breakpoint_name() -> String {
@@ -40,6 +40,13 @@ fn generate_breakpoint_name() -> String {
 fn generate_prev_breakpoint_name() -> String {
     let count = BREAKPOINT_COUNT.lock().unwrap();
     let s = format!("{}{}", "br_", *count - 1);
+
+    s
+}
+
+fn generate_prev_nth_breakpoint_name(n: usize) -> String {
+    let count = BREAKPOINT_COUNT.lock().unwrap();
+    let s = format!("{}{}", "br_", *count - n);
 
     s
 }
@@ -69,8 +76,8 @@ impl Debug for WasmAST {
 
 impl Display for WasmAST {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = wasm_ast_display_recurse(&self, self.tree.find_head().unwrap());
-        // format_wat(&mut s);
+        let mut s = wasm_ast_display_recurse(&self, self.tree.find_head().unwrap());
+        format_wat(&mut s);
         write!(f, "{}", s)
     }
 }
@@ -95,11 +102,11 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
     }
 
     match &ast.tree[curr].data {
-        Module => format!("(module\n{})", children!()),
-        Memory => format!("(memory $memory {})\n", ast.mem_size),
+        Module => format!("(module{})", children!()),
+        Memory => format!("(memory $memory {})", ast.mem_size),
 
-        Import { env, imp_name, t } => format!("(import \"{env}\" \"{imp_name}\" {t})\n"),
-        Export(t, exp_name) => format!("(export \"{exp_name}\" {t})\n"),
+        Import { env, imp_name, t } => format!("(import \"{env}\" \"{imp_name}\" {t})"),
+        Export(t, exp_name) => format!("(export \"{exp_name}\" {t})"),
 
         FuncDef {
             name,
@@ -140,15 +147,15 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
             );
 
             format!(
-                "(func ${name} (export \"{name_export}\") {params_str} {res_str}\n{dec_str}\n{})\n",
+                "(func ${name} (export \"{name_export}\") {params_str} {res_str} {dec_str} {})",
                 children!()
             )
         }
         FuncCall(s) => format!("(call ${s})"),
 
         If => match ast.tree[curr].children.len() {
-            2 => format!("(if\n{}\n{})", child!(0), child!(1)),
-            _ => format!("(if\n{})", children!()),
+            2 => format!("(if {} {})", child!(0), child!(1)),
+            _ => format!("(if {})", children!()),
         },
 
         Then => format!("(then {})", children!()),
@@ -159,46 +166,83 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
         End => format!("(end)"),
         Br(n) => format!("(br ${n})"),
 
-        MemAlloc(_size) => format!("()"),
-        // Get(t, s) => format!("({t}.load (global.get ${s}))\n"),
-        // Set(t, s) => format!("({t}.store (global.get ${s}) {})\n", children!()),
+        MemAlloc(size, align) => format!(
+            "(call ${} ({}.load {size}) ({}.load {align}))",
+            *MEM_ALLOC_NAME,
+            WasmType::from_type(&value::Type::ptr_type()),
+            WasmType::from_type(&value::Type::ptr_type()),
+        ),
+
+        StackAlloc(size, align) => format!(
+            "(call ${} ({}.load {size}) ({}.load {align}))",
+            *MEM_ALLOC_NAME,
+            WasmType::from_type(&value::Type::ptr_type()),
+            WasmType::from_type(&value::Type::ptr_type()),
+        ),
+
+        // Get(t, s) => format!("({t}.load (global.get ${s}))"),
+        // Set(t, s) => format!("({t}.store (global.get ${s}) {})", children!()),
         Load(t) => format!("({t}.load {})", children!()),
         Store(t) => format!("({t}.store {})", children!()),
 
         // Load(t, s) => format!(),
         // Store(t, s) => format!("()"),
-        Global(s, t) => format!("(global ${s} (mut {t}) {})\n", children!()),
-        Local(s, t) => format!("(local ${s} {t} {})\n", children!()),
+        Global(s, t) => format!("(global ${s} (mut {t}) {})", children!()),
+        Local(s, t) => format!("(local ${s} {t} {})", children!()),
 
         // GlobalGet(s) => format!("(global.get ${s}"),
-        LocalGet(s) => format!("(local.get ${s})\n"),
-        LocalSet(s) => format!("(local.set ${s} {})\n", children!()),
+        LocalGet(s) => format!("(local.get ${s})"),
+        LocalSet(s) => format!("(local.set ${s} {})", children!()),
 
         // Local(s, t) => format!("(local ${s} {t})"),
         Const(val) => format!("({}.const {val})", val.t()),
 
-        Add(t) => format!("({t}.add \n{})", children!()),
-        Sub(t) => format!("({t}.sub \n{})", children!()),
-        Mul(t) => format!("({t}.mul \n{})", children!()),
-        Div(t) => format!("({t}.div \n{})", children!()),
+        Add(t) => format!("({t}.add {})", children!()),
+        Sub(t) => format!("({t}.sub {})", children!()),
+        Mul(t) => format!("({t}.mul {})", children!()),
+        Div(t) => format!("({t}.div {})", children!()),
 
         // For now (until better type system), all operations are signed
-        Eq(t) => format!("({t}.eq \n{})", children!()),
-        Ne(t) => format!("({t}.ne \n{})", children!()),
-        Lt(t) => format!("({t}.lt_s \n{})", children!()),
-        Gt(t) => format!("({t}.gt_s \n{})", children!()),
-        Le(t) => format!("({t}.le_s \n{})", children!()),
-        Ge(t) => format!("({t}.ge_s \n{})", children!()),
+        Eq(t) => format!("({t}.eq {})", children!()),
+        Ne(t) => format!("({t}.ne {})", children!()),
+        Lt(t) => format!("({t}.lt_s {})", children!()),
+        Gt(t) => format!("({t}.gt_s {})", children!()),
+        Le(t) => format!("({t}.le_s {})", children!()),
+        Ge(t) => format!("({t}.ge_s {})", children!()),
 
         Empty => format!("({})", children!()),
-        //
-        // Empty => {
-        //     if ast.tree[curr].children.len() > 1 {
-        //         format!("({})", children!())
-        //     } else {
-        //         format!("{}", children!())
-        //     }
-        // }
+    }
+}
+
+fn format_wat(s: &mut String) {
+    const INDENT: usize = 2;
+    let mut curr_indent = 0;
+
+    // Indices where a newline should be inserted followed by some number of indents.
+    // Comes in pairs of `(index, num_indents)`
+    let mut newline_insertions = Vec::new();
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => {
+                newline_insertions.push((i, curr_indent));
+                curr_indent += 1;
+            }
+            ')' => {
+                // newline_insertions.push((i + 1, curr_indent));
+                curr_indent -= 1;
+            }
+            _ => (),
+        }
+    }
+
+    // Pop off of `newline_insertions`
+    while let Some((idx, indent)) = newline_insertions.pop() {
+        let sl = format!("\n{}", " ".repeat(indent * INDENT));
+        if idx >= s.len() {
+            continue;
+        }
+        s.insert_str(idx, &sl);
     }
 }
 
@@ -318,6 +362,7 @@ impl Display for WasmValue {
 
 #[derive(Debug, Clone)]
 enum ImportObjType {
+    Memory(String),
     Func {
         wasm_name: String,
         parameters: Vec<WasmType>,
@@ -331,6 +376,7 @@ impl Display for ImportObjType {
             f,
             "{}",
             match self {
+                ImportObjType::Memory(wasm_name) => format!("(memory ${wasm_name})"),
                 ImportObjType::Func {
                     wasm_name,
                     parameters,
@@ -351,6 +397,7 @@ impl Display for ImportObjType {
         )
     }
 }
+
 #[derive(Debug, Clone)]
 enum ExportObjType {
     Func(String),
@@ -411,10 +458,21 @@ enum WasmASTNode {
     /// `(br ${name})`
     Br(String),
 
-    /// Shorthand for calling the memory allocation method with the given memory size.
+    /// Shorthand for calling the memory allocation method with the given memory size and align.
     ///
-    /// Based on the given size of memory, this returns the
-    MemAlloc(MemoryIndex),
+    /// Returns a pointer to the start of the created allocation
+    MemAlloc(MemoryIndex, MemoryIndex),
+
+    /// Allocates memory with the given size and align.
+    ///
+    /// Returns a pointer to the start of the created allocation
+    StackAlloc(MemoryIndex, MemoryIndex),
+
+    // /// Shorthand for:
+    // /// 1. calling `stack_alloc` with the given size
+    // /// 2. storing `{child}` into memory at the location returned by `stack_alloc`
+    // /// 3. returning a pointer to the allocation
+    // LoadToStack(MemoryIndex),
 
     // /// Shorthand for getting a variable with the given name and type
     // ///
@@ -496,38 +554,25 @@ pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
         }
     }
 
-    //Add the memory and export it
+    // Import the memory
     {
-        let mem = ast.tree.new_node(WasmASTNode::Memory);
-        ast.tree.append_to(ast_head, mem)?;
-
-        let exp = ast.tree.new_node(WasmASTNode::Export(
-            ExportObjType::Memory("memory".into()),
-            "memory".into(),
-        ));
-        ast.tree.append_to(ast_head, exp)?;
+        let imp = ast.tree.new_node(WasmASTNode::Import {
+            env: "env".into(),
+            imp_name: "memory".into(),
+            t: ImportObjType::Memory("memory".into()),
+        });
     }
 
-    // vvvNow done during string flattening
-    // //For each method, figure out which local variables need declaration and add them to the start of the method
+    // //Add the memory and export it
     // {
-    //     //
-    //     for c in ast.tree[ast_head].children.clone() {
-    //         let vars = &mut HashSet::new();
-    //         match &ast.tree[c].data {
-    //             WasmASTNode::FuncDef { .. } => {
-    //                 //
-    //                 get_method_variables(&mut ast, c, vars);
-    //             }
-    //             _ => (),
-    //         }
+    //     // let mem = ast.tree.new_node(WasmASTNode::Memory);
+    //     // ast.tree.append_to(ast_head, mem)?;
 
-    //         //For each var, insert it
-    //         for v in vars.iter() {
-    //             //
-    //             let n = ast.tree.new_node(WasmASTNode::Local((), ()));
-    //         }
-    //     }
+    //     // let exp = ast.tree.new_node(WasmASTNode::Export(
+    //     //     ExportObjType::Memory("memory".into()),
+    //     //     "memory".into(),
+    //     // ));
+    //     // ast.tree.append_to(ast_head, exp)?;
     // }
 
     compile_irast_recurse(
@@ -693,16 +738,34 @@ fn compile_irast_recurse(
                 .new_node(WasmASTNode::FuncCall(irast[id].name().clone()));
             wasm.tree.append_to(parent_wasm, call)?;
         }
-        // A reference is just:
-        // `(t.load
-        //      {child}
-        //  )`
-        //
-        //
-        // These both treat this reference as a location in memory, but in effect they are both:
-        // `(t.load )`
+        /*
+        Since local variables store references into memory, getting a (raw) reference is just:
+        `
+        (
+            (local ${tmp_addr}
+                (call $stack_alloc {ptr_size} {align})
+            )
+            (t.store
+                (local.get ${tmp_addr})
+                {child}
+            )
+            (local.get ${tmp_addr})
+        )
+        `
+        Things will change when starting to use reference counting
+
+
+        A dereference is just:
+        `(t.load
+             {child}
+         )`
+        */
         IRNodeType::Reference => {
-            todo!()
+            let ptr_type = WasmType::from_type(&value::Type::ptr_type());
+
+            let parent = wasm.tree.new_node(WasmASTNode::Load(ptr_type));
+
+            compile_irast_recurse(irast, children[0], wasm, used_vars, parent)?;
         }
         IRNodeType::IfCondition => {
             let t = WasmType::from_type(&irast[children[1]].data.return_type);

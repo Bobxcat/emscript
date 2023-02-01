@@ -402,6 +402,7 @@ dependencies = [
  "wasm-opt",
  "wasmer",
  "wasmer-compiler-cranelift",
+ "wasmer-vm",
 ]
 
 [[package]]
