@@ -173,14 +173,15 @@ pub enum Type {
 
 impl Type {
     /// Returns the type representing the width of wasm pointers into memory
-    pub fn ptr_type() -> Self {
+    #[inline(always)]
+    pub const fn ptr_type() -> Self {
         #[cfg(not(feature = "mem_64bit"))]
         {
-            Type::Int64
+            Type::Int32
         }
         #[cfg(feature = "mem_64bit")]
         {
-            Type::Int32
+            Type::Int64
         }
     }
 }

@@ -384,4 +384,10 @@ impl StackAllocator {
             self.pop();
         }
     }
+    /// Invalidates all active allocations and resets the stack_ptr to 0.
+    /// This is a fairly cheap operation
+    pub fn pop_all(&mut self) {
+        self.allocations.clear();
+        self.stack_ptr = 0;
+    }
 }

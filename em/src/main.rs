@@ -68,6 +68,16 @@ mod value;
 mod verify;
 /// Deals with compiling an IRAST into corresponding WASM code
 mod wasm;
+/// An intermediate representation which structurally resembles WASM.
+///
+/// In `WIR`:
+/// - There are two sections of memory: the stack and the heap.
+/// Allocations in the stack are released at the end of their scope, while
+/// allocations in the heap are released manually (__`TODO`__: use GC)
+///
+/// - Types and basic ops on types are abstracted, so using `+` to add two custom types
+/// which implement `Add` is represented using the `Add` node (just like in `IR`)
+mod wir;
 
 /// Compilation steps:
 /// - Generate an interface, providing methods for all exported methods (probably using `generate_translation_with_sizes!(..)`)
@@ -135,6 +145,10 @@ impl WasmEnv {
 /// * `interface` - The interface definition which defines the host methods which will be used
 /// * `store` - The store for wasm code
 /// * `implement_interface_methods` - A callback which is used to populate the method implementations of the given interface
+///
+/// The general idea of compiliation is to do these transformations:
+///
+/// `emscript text` -> `Vec<Token>` -> `AST` -> `IRAST` -> `WIR` -> `WASMAST` -> `wasm text` -> `wasm binary`
 fn compile(
     raw: &str,
     _cfg: RuntimeCfg,
@@ -329,6 +343,8 @@ fn compile(
 
 //Dirty fix to deal with stack overflow for now (without having to use `--release`)
 fn main() {
+    // std::env::set_var("RUST_BACKTRACE", "1");
+
     //Launch the `start` method on a second thread, with controlled stack size, and block for it
     let res = {
         use std::thread::*;

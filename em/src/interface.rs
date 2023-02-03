@@ -12,7 +12,7 @@ use crate::{
         mem_idx_to_wasm_value, wasm_value_to_mem_idx, StackAllocator, WAllocator, STACK_SIZE,
     },
     token::tokenize,
-    utils::{MEM_ALLOC_NAME, STACK_ALLOC_NAME},
+    utils::{MEM_ALLOC_NAME, STACK_ALLOC_NAME, STACK_POP_MULTIPLE_NAME},
     value::{custom_types::str_to_type, Type},
     WasmEnv,
 };
@@ -234,6 +234,8 @@ impl InterfaceDef {
 
     const STACKALLOC_SIGNATURE: ([wasmer::Type; 2], [wasmer::Type; 1]) = Self::MALLOC_SIGNATURE;
 
+    const STACKPOPN_SIGNATURE: ([wasmer::Type; 1], [wasmer::Type; 0]) = ([wasmer::Type::I32], []);
+
     pub fn new() -> Self {
         let mut s = Self::default();
 
@@ -258,6 +260,18 @@ impl InterfaceDef {
                 method_name: STACK_ALLOC_NAME.to_string(),
                 params: vec![ptr_type.clone(), ptr_type.clone()],
                 ret: ptr_type.clone(),
+                f: None,
+            };
+            s.insert(imp);
+        }
+
+        // stack_pop_n
+        {
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: STACK_POP_MULTIPLE_NAME.to_string(),
+                params: vec![ptr_type.clone()],
+                ret: Type::Void,
                 f: None,
             };
             s.insert(imp);
@@ -311,8 +325,6 @@ impl InterfaceDef {
     fn add_alloc_implementation(
         &mut self,
         allocator: Arc<Mutex<impl WAllocator<STACK_SIZE> + Sync + Send + 'static>>,
-        // imports: &mut Imports,
-        // store: StoreMut<'_>,
         env: &FunctionEnv<WasmEnv>,
     ) {
         // IMPORTANT NOTE:
@@ -378,6 +390,32 @@ impl InterfaceDef {
                         let ret = allocator.alloc(size, align);
 
                         Ok(vec![mem_idx_to_wasm_value(ret)])
+                    },
+                )),
+            };
+
+            if let Some(prev) = self.insert(imp) {
+                println!("importing `stack_alloc` overrided the following import: {prev:#?} (this should be happen and should override a stack_alloc declaration)");
+            }
+        }
+
+        //`stack_pop_n`
+        {
+            let allocator = stack_allocator.clone();
+            let imp = MethodImport {
+                mod_name: "env".to_string(),
+                method_name: STACK_POP_MULTIPLE_NAME.to_string(),
+                params: vec![ptr_type.clone()],
+                ret: Type::Void,
+                f: Some(Function::new(
+                    store,
+                    Self::STACKPOPN_SIGNATURE,
+                    move |args: &[wasmer::Value]| {
+                        let n = wasm_value_to_mem_idx(args[0].clone());
+                        let mut allocator = allocator.lock().expect("stack_alloc failed to lock");
+                        allocator.pop_n(n);
+
+                        Ok(vec![])
                     },
                 )),
             };

@@ -9,47 +9,12 @@ use once_cell::sync::Lazy;
 use crate::{
     ir::{IRNodeType, IdentInfo, IRAST},
     tree::{NodeId, Tree},
-    utils::{MEM_ALLOC_NAME, PREFIX_TMP},
+    utils::{MEM_ALLOC_NAME, PREFIX_TMP, STACK_ALLOC_NAME, STACK_POP_MULTIPLE_NAME},
     value::{self, Value},
+    wir::{self, WIRNode, WIRAST},
 };
 
 use em_core::memory::MemoryIndex;
-
-/// The number of variables generated using `generate_tmp(..)`
-static TMP_VAR_COUNT: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
-
-fn generate_tmp() -> String {
-    let mut count = TMP_VAR_COUNT.lock().unwrap();
-    let s = format!("{}{}", PREFIX_TMP, count);
-    *count += 1;
-
-    s
-}
-
-/// The number of variables generated so far using `generate_breakpoint_name(..)`
-static BREAKPOINT_COUNT: Lazy<Mutex<usize>> = Lazy::new(|| Mutex::new(0));
-
-fn generate_breakpoint_name() -> String {
-    let mut count = BREAKPOINT_COUNT.lock().unwrap();
-    let s = format!("{}{}", "br_", count);
-    *count += 1;
-
-    s
-}
-
-fn generate_prev_breakpoint_name() -> String {
-    let count = BREAKPOINT_COUNT.lock().unwrap();
-    let s = format!("{}{}", "br_", *count - 1);
-
-    s
-}
-
-fn generate_prev_nth_breakpoint_name(n: usize) -> String {
-    let count = BREAKPOINT_COUNT.lock().unwrap();
-    let s = format!("{}{}", "br_", *count - n);
-
-    s
-}
 
 pub struct WasmAST {
     tree: Tree<WasmASTNode>,
@@ -167,17 +132,23 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
         Br(n) => format!("(br ${n})"),
 
         MemAlloc(size, align) => format!(
-            "(call ${} ({}.load {size}) ({}.load {align}))",
+            "(call ${} ({}.const {size}) ({}.const {align}))",
             *MEM_ALLOC_NAME,
-            WasmType::from_type(&value::Type::ptr_type()),
-            WasmType::from_type(&value::Type::ptr_type()),
+            WasmType::ptr_type(),
+            WasmType::ptr_type(),
         ),
 
         StackAlloc(size, align) => format!(
-            "(call ${} ({}.load {size}) ({}.load {align}))",
-            *MEM_ALLOC_NAME,
-            WasmType::from_type(&value::Type::ptr_type()),
-            WasmType::from_type(&value::Type::ptr_type()),
+            "(call ${} ({}.const {size}) ({}.const {align}))",
+            *STACK_ALLOC_NAME,
+            WasmType::ptr_type(),
+            WasmType::ptr_type(),
+        ),
+
+        StackPop(n) => format!(
+            "(call ${} ({}.const {n}))",
+            *STACK_POP_MULTIPLE_NAME,
+            WasmType::ptr_type(),
         ),
 
         // Get(t, s) => format!("({t}.load (global.get ${s}))"),
@@ -254,6 +225,9 @@ enum WasmType {
 }
 
 impl WasmType {
+    fn ptr_type() -> Self {
+        Self::from_type(&value::Type::ptr_type())
+    }
     fn from_type(t: &value::Type) -> Self {
         use WasmBuiltinType::*;
         match t {
@@ -262,6 +236,8 @@ impl WasmType {
             value::Type::Int32 => WasmType::Builtin(I32),
             value::Type::Int64 => WasmType::Builtin(I64),
             value::Type::Void => WasmType::None,
+
+            value::Type::Ref(_) => WasmType::Builtin(I32),
             _ => todo!("{t}"),
         }
     }
@@ -275,7 +251,8 @@ impl WasmType {
             _ => unimplemented!(),
         }
     }
-    fn size(self) -> usize {
+    /// Gets the size (in bytes) of the given type
+    fn size(self) -> MemoryIndex {
         use WasmBuiltinType::*;
         use WasmType::*;
 
@@ -341,6 +318,24 @@ impl WasmValue {
             WasmValue::I64(_) => WasmType::Builtin(I64),
             WasmValue::F32(_) => WasmType::Builtin(F32),
             WasmValue::F64(_) => WasmType::Builtin(F64),
+        }
+    }
+    fn from_val(v: Value) -> Self {
+        match v {
+            Value::Bool(n) => Self::I32(n as u8 as i32),
+            Value::Int(n) => Self::I32(n as i32),
+            Value::Int32(n) => Self::I32(n as i32),
+            _ => todo!(),
+        }
+    }
+    fn ptr_val(n: MemoryIndex) -> Self {
+        #[cfg(not(feature = "mem_64bit"))]
+        {
+            Self::I32(unsafe { std::mem::transmute(n) })
+        }
+        #[cfg(feature = "mem_64bit")]
+        {
+            Self::I64(unsafe { std::mem::transmute(n) })
         }
     }
 }
@@ -468,6 +463,9 @@ enum WasmASTNode {
     /// Returns a pointer to the start of the created allocation
     StackAlloc(MemoryIndex, MemoryIndex),
 
+    /// Shortcut for popping the given number of allocations from the stack
+    StackPop(MemoryIndex),
+
     // /// Shorthand for:
     // /// 1. calling `stack_alloc` with the given size
     // /// 2. storing `{child}` into memory at the location returned by `stack_alloc`
@@ -482,18 +480,17 @@ enum WasmASTNode {
     // ///
     // /// `({t}.store (global.get ${name}) ({child}))`
     // Set(WasmType, String),
+    /// `1` child, memory location
     Load(WasmType),
+    /// `2` children, memory location and value
     Store(WasmType),
 
-    // Load(WasmType, String),
-    // /// 1 child (memory location)
-    // Store(WasmType),
     Global(String, WasmType),
     Local(String, WasmType),
     // GlobalGet(String),
     /// `(local.get ${name})`
     LocalGet(String),
-    /// `(local.set ${name})`
+    /// `(local.set ${name} {children})`
     LocalSet(String),
     // /// `(local ${name} {t})`
     // Local(String, WasmType),
@@ -525,43 +522,43 @@ impl Display for WasmASTNode {
 }
 
 pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
-    let mut ast = WasmAST::new();
-    let ast_head = ast.tree.new_node(WasmASTNode::Module);
+    // let mut ast = WasmAST::new();
+    // let ast_head = ast.tree.new_node(WasmASTNode::Module);
 
-    //Add all imported methods
-    for (_, info) in &irast.idents {
-        match info {
-            IdentInfo::ExternMethod {
-                mod_name,
-                imp_name,
-                name,
-                params,
-                return_type,
-            } => {
-                let n = ast.tree.new_node(WasmASTNode::Import {
-                    env: mod_name.clone(),
-                    imp_name: imp_name.clone(),
+    // //Add all imported methods
+    // for (_, info) in &irast.idents {
+    //     match info {
+    //         IdentInfo::ExternMethod {
+    //             mod_name,
+    //             imp_name,
+    //             name,
+    //             params,
+    //             return_type,
+    //         } => {
+    //             let n = ast.tree.new_node(WasmASTNode::Import {
+    //                 env: mod_name.clone(),
+    //                 imp_name: imp_name.clone(),
 
-                    t: ImportObjType::Func {
-                        wasm_name: name.clone(),
-                        parameters: params.iter().map(|(_, t)| WasmType::from_type(t)).collect(),
-                        ret: WasmType::from_type(&return_type),
-                    },
-                });
-                ast.tree.append_to(ast_head, n)?;
-            }
-            _ => (),
-        }
-    }
+    //                 t: ImportObjType::Func {
+    //                     wasm_name: name.clone(),
+    //                     parameters: params.iter().map(|(_, t)| WasmType::from_type(t)).collect(),
+    //                     ret: WasmType::from_type(&return_type),
+    //                 },
+    //             });
+    //             ast.tree.append_to(ast_head, n)?;
+    //         }
+    //         _ => (),
+    //     }
+    // }
 
-    // Import the memory
-    {
-        let imp = ast.tree.new_node(WasmASTNode::Import {
-            env: "env".into(),
-            imp_name: "memory".into(),
-            t: ImportObjType::Memory("memory".into()),
-        });
-    }
+    // // Import the memory
+    // {
+    //     let imp = ast.tree.new_node(WasmASTNode::Import {
+    //         env: "env".into(),
+    //         imp_name: "memory".into(),
+    //         t: ImportObjType::Memory("memory".into()),
+    //     });
+    // }
 
     // //Add the memory and export it
     // {
@@ -575,17 +572,241 @@ pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
     //     // ast.tree.append_to(ast_head, exp)?;
     // }
 
-    compile_irast_recurse(
-        irast,
-        irast.tree.find_head().unwrap(),
-        &mut ast,
-        &mut HashSet::new(),
-        ast_head,
-    )?;
+    // compile_irast_recurse(
+    //     irast,
+    //     irast.tree.find_head().unwrap(),
+    //     &mut ast,
+    //     &mut HashSet::new(),
+    //     &mut 0,
+    //     ast_head,
+    // )?;
 
     // println!("\n\n{ast:#?}\n\n");
 
-    Ok(ast)
+    // Ok(ast)
+
+    let wir = wir::compile_irast(irast)?;
+
+    compile_wir(&wir)
+}
+
+fn compile_wir(wir: &WIRAST) -> anyhow::Result<WasmAST> {
+    let mut wasm = WasmAST::new();
+    compile_wir_recurse(
+        wir,
+        wir.tree.find_head().unwrap(),
+        &mut wasm,
+        0.into(),
+        &mut HashSet::new(),
+    )?;
+    Ok(wasm)
+}
+
+fn compile_wir_recurse(
+    wir: &WIRAST,
+    curr: NodeId,
+    wasm: &mut WasmAST,
+    parent_wasm: NodeId,
+    used_variables: &mut HashSet<(String, WasmType)>,
+) -> anyhow::Result<()> {
+    let children = wir.tree[curr].children.clone();
+    match &wir.tree[curr].data {
+        WIRNode::Module => {
+            let parent = wasm.tree.new_node(WasmASTNode::Module);
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, parent, used_variables)?;
+            }
+        }
+        WIRNode::FuncDef {
+            name,
+            name_export,
+            params,
+            ret,
+        } => {
+            let mut used_variables = HashSet::new();
+
+            let f = wasm.tree.new_node(WasmASTNode::Empty);
+            wasm.tree.append_to(parent_wasm, f)?;
+
+            compile_wir_recurse(wir, children[0], wasm, f, &mut used_variables)?;
+
+            let f_dat = WasmASTNode::FuncDef {
+                name: name.clone(),
+                name_export: name_export.clone(),
+                params: params
+                    .iter()
+                    .map(|(name, t)| (name.clone(), WasmType::from_type(t)))
+                    .collect(),
+                ret: vec![WasmType::from_type(ret)],
+                used_variables,
+            };
+            wasm.tree[f].data = f_dat;
+        }
+
+        // Things which translate more or less directly from WIR
+
+        // Loading params is dealt with in `WIR`
+        WIRNode::FuncCall(name) => {
+            let n = wasm.tree.new_node(WasmASTNode::FuncCall(name.clone()));
+            wasm.tree.append_to(parent_wasm, n)?;
+        }
+
+        // In general, control flow is wasmified in `WIR`
+        WIRNode::Loop(name) => {
+            let n = wasm.tree.new_node(WasmASTNode::Loop(name.clone()));
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+        WIRNode::Block(name) => {
+            let n = wasm.tree.new_node(WasmASTNode::Block(name.clone()));
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+        WIRNode::Br(name) => {
+            let n = wasm.tree.new_node(WasmASTNode::Br(name.clone()));
+            wasm.tree.append_to(parent_wasm, n)?;
+        }
+        WIRNode::End => {
+            let n = wasm.tree.new_node(WasmASTNode::End);
+            wasm.tree.append_to(parent_wasm, n)?;
+        }
+
+        WIRNode::If => {
+            let n = wasm.tree.new_node(WasmASTNode::If);
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+        WIRNode::Then => {
+            let n = wasm.tree.new_node(WasmASTNode::Then);
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+        WIRNode::Else => {
+            let n = wasm.tree.new_node(WasmASTNode::Else);
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+
+        WIRNode::Const(v) => {
+            let val = WasmValue::from_val(v.clone());
+            let n = wasm.tree.new_node(WasmASTNode::Const(val));
+            wasm.tree.append_to(parent_wasm, n)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, n, used_variables)?;
+            }
+        }
+
+        /*
+        (ptr_t.add
+            (local.get ${name})
+            (ptr_t.const {offset})
+        )
+        */
+        WIRNode::GetRefLocal(name, offset) => {
+            let add = wasm.tree.new_node(WasmASTNode::Add(WasmType::ptr_type()));
+            let local_get = wasm.tree.new_node(WasmASTNode::LocalGet(name.clone()));
+            let offset = wasm
+                .tree
+                .new_node(WasmASTNode::Const(WasmValue::ptr_val(*offset)));
+
+            wasm.tree.append_to(parent_wasm, add)?;
+            wasm.tree.append_to(add, local_get)?;
+            wasm.tree.append_to(add, offset)?;
+        }
+        /*
+        (t.load
+            (local.get ${name})
+        )
+        */
+        WIRNode::GetValueLocal(name, t) => {
+            let t = WasmType::from_type(t);
+
+            let load = wasm.tree.new_node(WasmASTNode::Load(t));
+            let local_get = wasm.tree.new_node(WasmASTNode::LocalGet(name.clone()));
+
+            wasm.tree.append_to(parent_wasm, load)?;
+            wasm.tree.append_to(load, local_get)?;
+        }
+        /*
+        (t.store
+            (local.get ${name})
+            {child}
+        )
+        */
+        WIRNode::SetLocal(name, t) => {
+            let t = WasmType::from_type(t);
+            // Register as a used variable
+            {
+                used_variables.insert((name.clone(), t.clone()));
+            }
+
+            let store = wasm.tree.new_node(WasmASTNode::Store(t));
+            let local_get = wasm.tree.new_node(WasmASTNode::LocalGet(name.clone()));
+
+            wasm.tree.append_to(store, local_get)?;
+            wasm.tree.append_to(parent_wasm, store)?;
+
+            compile_wir_recurse(wir, children[0], wasm, store, used_variables)?;
+        }
+        WIRNode::DropPoint => todo!(),
+
+        // Binary operations translate more-or-less directly, with the exception of
+        // custom type implementations for ops (which are function calls)
+        //
+        // Luckily for me, traits aren't implemented yet. Lucky break
+        WIRNode::Eq(t)
+        | WIRNode::Ne(t)
+        | WIRNode::Lt(t)
+        | WIRNode::Gt(t)
+        | WIRNode::Le(t)
+        | WIRNode::Ge(t)
+        | WIRNode::Add(t)
+        | WIRNode::Sub(t)
+        | WIRNode::Mul(t)
+        | WIRNode::Div(t) => {
+            let t_wasm = WasmType::from_type(t);
+            let parent = wasm.tree.new_node(match wir.tree[curr].data {
+                WIRNode::Eq(_) => WasmASTNode::Eq(t_wasm),
+                WIRNode::Ne(_) => WasmASTNode::Ne(t_wasm),
+                WIRNode::Lt(_) => WasmASTNode::Lt(t_wasm),
+                WIRNode::Gt(_) => WasmASTNode::Gt(t_wasm),
+                WIRNode::Le(_) => WasmASTNode::Le(t_wasm),
+                WIRNode::Ge(_) => WasmASTNode::Ge(t_wasm),
+
+                WIRNode::Add(_) => WasmASTNode::Add(t_wasm),
+                WIRNode::Sub(_) => WasmASTNode::Sub(t_wasm),
+                WIRNode::Mul(_) => WasmASTNode::Mul(t_wasm),
+                WIRNode::Div(_) => WasmASTNode::Div(t_wasm),
+
+                _ => unreachable!(),
+            });
+            wasm.tree.append_to(parent_wasm, parent)?;
+        }
+        WIRNode::Empty => {
+            let parent = wasm.tree.new_node(WasmASTNode::Empty);
+            wasm.tree.append_to(parent_wasm, parent)?;
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, parent, used_variables)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 // /// Given a node representing a method declaration, returns a map of all the local variables which are used in the method body
@@ -602,303 +823,442 @@ pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
 //     }
 // }
 
-/// * `irast` - The IRAST which is being compiled from
-/// * `curr` - The current node in the IRAST
-/// * `wasm` - The tree representing the generated compiled wasm code
-/// * `used_vars` - The set of variables used within this function
-/// * `parent_wasm` - The id of the node which called this method recursively
-///
-/// Each subtree is expected to leave its return value on the top of the stack
-fn compile_irast_recurse(
-    irast: &IRAST,
-    curr: NodeId,
-    wasm: &mut WasmAST,
-    used_vars: &mut HashSet<(String, WasmType)>,
-    parent_wasm: NodeId,
-) -> anyhow::Result<()> {
-    let children = irast.tree[curr].children.clone();
+// /// * `irast` - The IRAST which is being compiled from
+// /// * `curr` - The current node in the IRAST
+// /// * `wasm` - The tree representing the generated compiled wasm code
+// /// * `used_vars` - The set of variables used within this function
+// /// * `num_allocations_in_scope` - The number of stack allocations which have been made within the same scope as `curr`
+// /// * `parent_wasm` - The id of the node which called this method recursively
+// ///
+// /// Each subtree is expected to leave its return value on the top of the stack
+// fn compile_irast_recurse(
+//     irast: &IRAST,
+//     curr: NodeId,
+//     wasm: &mut WasmAST,
+//     used_vars: &mut HashSet<(String, WasmType)>,
+//     num_stack_allocations_in_scope: &mut MemoryIndex,
+//     parent_wasm: NodeId,
+// ) -> anyhow::Result<()> {
+//     let children = irast.tree[curr].children.clone();
 
-    match irast.tree[curr].data.t.clone() {
-        IRNodeType::Literal(v) => {
-            let n = wasm.tree.new_node(WasmASTNode::Const(match v {
-                Value::Bool(n) => WasmValue::I32(n as u8 as i32),
-                Value::Int(n) => WasmValue::I32(n as i32),
-                Value::Int32(n) => WasmValue::I32(n as i32),
-                _ => todo!(),
-            }));
-            wasm.tree.append_to(parent_wasm, n)?;
-        }
-        IRNodeType::VarRef(id) => {
-            let n = wasm.tree.new_node(WasmASTNode::LocalGet(
-                // WasmType::from_type(&irast[id].return_type()),
-                format!("{}", irast[id].name()),
-            ));
-            wasm.tree.append_to(parent_wasm, n)?;
-        }
-        IRNodeType::FieldRef(_) => todo!(),
+//     match irast.tree[curr].data.t.clone() {
+//         IRNodeType::Literal(v) => {
+//             let n = wasm.tree.new_node(WasmASTNode::Const(match v {
+//                 Value::Bool(n) => WasmValue::I32(n as u8 as i32),
+//                 Value::Int(n) => WasmValue::I32(n as i32),
+//                 Value::Int32(n) => WasmValue::I32(n as i32),
+//                 _ => todo!(),
+//             }));
+//             wasm.tree.append_to(parent_wasm, n)?;
+//         }
+//         IRNodeType::VarRef(id) => {
+//             let n = wasm.tree.new_node(WasmASTNode::LocalGet(
+//                 // WasmType::from_type(&irast[id].return_type()),
+//                 format!("{}", irast[id].name()),
+//             ));
+//             wasm.tree.append_to(parent_wasm, n)?;
+//         }
+//         // Get the local representing the pointer into memory and then
+//         // add the appropriate offset
+//         IRNodeType::FieldRef(_) => todo!(),
 
-        //Assignments:(
-        //  (i32.store (global.get ${var_name})
-        //      ({child_0})
-        //  )
-        //)
-        IRNodeType::VarDef(id) => {
-            let var_name = irast[id].name();
-            //Declaration is handled seperately, since it must be done at the start of the method
+//         /* Assignments:
 
-            //Insert this variable as one which is used in the method
-            {
-                let t = WasmType::from_type(&irast[id].return_type());
-                used_vars.insert((var_name.clone(), t));
-            }
+//         `
+//         Store({child_type})
+//             LocalGet({lhs_name}) # get the actual memory location
+//             {child}              # get the value to store
+//         `
 
-            // //Declare the variable
-            // let dec = wasm.tree.new_node(WasmASTNode::Local(
-            //     format!("{var_name}"),
-            //     WasmType::from_type(&irast[id].return_type()),
-            // ));
-            // wasm.tree.append_to(parent_wasm, dec)?;
+//         The following is **prepended** as a variable declaration:
+//         `
+//         LocalSet({lhs_name})   # allocate the local variable
+//             StackAlloc({lhs_size}, {align})
+//         `
 
-            //Do the assignment part
-            let parent = wasm
-                .tree
-                .new_node(WasmASTNode::LocalSet(format!("{var_name}")));
+//         */
+//         IRNodeType::VarDef(id) => {
+//             let var_name = irast[id].name();
+//             //Declaration is handled seperately, since it must be done at the start of the method
 
-            wasm.tree.append_to(parent_wasm, parent)?;
+//             //Insert this variable as one which is used in the method
+//             let t = {
+//                 let t = WasmType::from_type(&irast[id].return_type());
+//                 used_vars.insert((var_name.clone(), t.clone()));
+//                 t
+//             };
 
-            compile_irast_recurse(irast, children[0], wasm, used_vars, parent)?;
-        }
-        IRNodeType::Assign(id) => {
-            let var_name = irast[id].name();
-            let parent = wasm
-                .tree
-                .new_node(WasmASTNode::LocalSet(format!("{var_name}")));
-            wasm.tree.append_to(parent_wasm, parent)?;
+//             // Allocation
+//             let local_set = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::LocalSet(format!("{var_name}")));
 
-            compile_irast_recurse(irast, children[0], wasm, used_vars, parent)?;
-        }
+//             let stack_alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
 
-        IRNodeType::MethodDef(id) => {
-            let method_name = irast[id].name();
+//             wasm.tree.append_to(local_set, stack_alloc)?;
+//             wasm.tree.append_to(parent_wasm, local_set)?;
 
-            let params: Vec<_> = {
-                use IdentInfo::*;
-                match &irast[id] {
-                    Method { params, .. } => params
-                        .iter()
-                        .map(|id| {
-                            let (ret, name) = irast[*id].name_and_return_type();
-                            (format!("{}", name), WasmType::from_type(&ret))
-                        })
-                        .collect(),
-                    ExternMethod { params, .. } => params
-                        .iter()
-                        .map(|(name, ret)| (format!("{}", name), WasmType::from_type(&ret)))
-                        .collect(),
-                    _ => unreachable!(),
-                }
-            };
+//             // Loading value into memory
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 parent,
+//             )?;
+//         }
+//         IRNodeType::Assign(id) => {
+//             let var_name = irast[id].name();
+//             let parent = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::LocalSet(format!("{var_name}")));
+//             wasm.tree.append_to(parent_wasm, parent)?;
 
-            //Create standin for the real function def
-            let func = WasmASTNode::Empty;
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 parent,
+//             )?;
+//         }
 
-            let parent = wasm.tree.new_node(func);
-            wasm.tree.append_to(parent_wasm, parent)?;
+//         IRNodeType::MethodDef(id) => {
+//             let method_name = irast[id].name();
 
-            let mut used_vars = HashSet::new();
+//             let params: Vec<_> = {
+//                 use IdentInfo::*;
+//                 match &irast[id] {
+//                     Method { params, .. } => params
+//                         .iter()
+//                         .map(|id| {
+//                             let (ret, name) = irast[*id].name_and_return_type();
+//                             (format!("{}", name), WasmType::from_type(&ret))
+//                         })
+//                         .collect(),
+//                     ExternMethod { params, .. } => params
+//                         .iter()
+//                         .map(|(name, ret)| (format!("{}", name), WasmType::from_type(&ret)))
+//                         .collect(),
+//                     _ => unreachable!(),
+//                 }
+//             };
 
-            compile_irast_recurse(irast, children[0], wasm, &mut used_vars, parent)?;
+//             //Create standin for the real function def
+//             let func = WasmASTNode::Empty;
 
-            let func = WasmASTNode::FuncDef {
-                name: format!("{method_name}"),
-                name_export: format!(
-                    "{}",
-                    match &irast[id] {
-                        IdentInfo::Method { name, .. } => name,
-                        IdentInfo::ExternMethod { imp_name, .. } => imp_name,
-                        _ => unreachable!(),
-                    }
-                ),
-                used_variables: used_vars,
-                params: params.clone(),
-                ret: vec![WasmType::from_type(&irast[id].return_type())],
-            };
+//             let parent = wasm.tree.new_node(func);
+//             wasm.tree.append_to(parent_wasm, parent)?;
 
-            wasm.tree[parent].data = func;
-        }
-        IRNodeType::MethodCall(id) => {
-            //Get each param in order, then call
-            for c in children {
-                compile_irast_recurse(irast, c, wasm, used_vars, parent_wasm)?;
-            }
+//             let mut used_vars = HashSet::new();
 
-            //Call
-            let call = wasm
-                .tree
-                .new_node(WasmASTNode::FuncCall(irast[id].name().clone()));
-            wasm.tree.append_to(parent_wasm, call)?;
-        }
-        /*
-        Since local variables store references into memory, getting a (raw) reference is just:
-        `
-        (
-            (local ${tmp_addr}
-                (call $stack_alloc {ptr_size} {align})
-            )
-            (t.store
-                (local.get ${tmp_addr})
-                {child}
-            )
-            (local.get ${tmp_addr})
-        )
-        `
-        Things will change when starting to use reference counting
+//             let mut stack_allocs = 0;
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 &mut used_vars,
+//                 &mut stack_allocs,
+//                 parent,
+//             )?;
 
+//             let func = WasmASTNode::FuncDef {
+//                 name: format!("{method_name}"),
+//                 name_export: format!(
+//                     "{}",
+//                     match &irast[id] {
+//                         IdentInfo::Method { name, .. } => name,
+//                         IdentInfo::ExternMethod { imp_name, .. } => imp_name,
+//                         _ => unreachable!(),
+//                     }
+//                 ),
+//                 used_variables: used_vars,
+//                 params: params.clone(),
+//                 ret: vec![WasmType::from_type(&irast[id].return_type())],
+//             };
 
-        A dereference is just:
-        `(t.load
-             {child}
-         )`
-        */
-        IRNodeType::Reference => {
-            let ptr_type = WasmType::from_type(&value::Type::ptr_type());
+//             wasm.tree[parent].data = func;
 
-            let parent = wasm.tree.new_node(WasmASTNode::Load(ptr_type));
+//             //Deallocate all the stack allocations
+//             let pop = wasm.tree.new_node(WasmASTNode::StackPop(stack_allocs));
+//             wasm.tree.append_to(parent, pop)?;
+//         }
+//         IRNodeType::MethodCall(id) => {
+//             //Get each param in order, then call
+//             for c in children {
+//                 compile_irast_recurse(
+//                     irast,
+//                     c,
+//                     wasm,
+//                     used_vars,
+//                     num_stack_allocations_in_scope,
+//                     parent_wasm,
+//                 )?;
+//             }
 
-            compile_irast_recurse(irast, children[0], wasm, used_vars, parent)?;
-        }
-        IRNodeType::IfCondition => {
-            let t = WasmType::from_type(&irast[children[1]].data.return_type);
+//             //Call
+//             let call = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::FuncCall(irast[id].name().clone()));
+//             wasm.tree.append_to(parent_wasm, call)?;
+//         }
+//         /*
+//         Since local variables store references into memory, getting a (raw) reference is just:
+//         `
+//         (
+//             (local.set ${tmp_addr}
+//                 (call $stack_alloc {ptr_size} {align})
+//             )
+//             (t.store
+//                 (local.get ${tmp_addr})
+//                 {child}
+//             )
+//             (local.get ${tmp_addr})
+//         )
+//         `
+//         In terms of the AST, this is:
+//         `
+//             LocalSet({tmp_var})    // create a tmp variable which stores the pointer to allocation
+//                 StackAlloc(..)
+//             Store(..)              // store value of the child in the address `{tmp_var}`
+//                 {child}
+//             LocalGet({tmp_var})    // return the allocation pointer
+//         `
+//         Things will change when starting to use reference counting
 
-            //Return value temporary var (only if there is a return value)
-            let ret = if t != WasmType::None {
-                let s = generate_tmp();
-                let id = wasm.tree.new_node(WasmASTNode::Local(s.clone(), t));
-                wasm.tree.append_to(parent_wasm, id)?;
-                Some(s)
-            } else {
-                None
-            };
+//         A dereference is just:
+//         `
+//         (t.load
+//             {child}
+//         )
+//         `
+//         */
+//         IRNodeType::Reference => {
+//             let ptr_type = WasmType::from_type(&value::Type::ptr_type());
 
-            // First, generate the conditional (note that bools are i32s in wasm)
-            {
-                compile_irast_recurse(irast, children[0], wasm, used_vars, parent_wasm)?;
-            }
+//             // let parent = wasm.tree.new_node(WasmASTNode::Load(ptr_type));
+//             let tmp_var_name = generate_tmp();
 
-            let parent = wasm.tree.new_node(WasmASTNode::If);
-            wasm.tree.append_to(parent_wasm, parent)?;
+//             // Create a tmp var which holds the pointer to memory
+//             let tmp_var_dec = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::LocalSet(tmp_var_name.clone()));
+//             let stack_alloc = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::StackAlloc(ptr_type.size(), 1));
+//             wasm.tree.append_to(stack_alloc, tmp_var_dec)?;
+//             wasm.tree.append_to(parent_wasm, stack_alloc)?;
 
-            let then = wasm.tree.new_node(WasmASTNode::Then);
-            wasm.tree.append_to(parent, then)?;
+//             // Register the tmp var for this method
+//             {
+//                 let t = ptr_type.clone();
+//                 used_vars.insert((tmp_var_name.clone(), t));
+//             }
 
-            compile_irast_recurse(irast, children[1], wasm, used_vars, then)?;
+//             let store = wasm.tree.new_node(WasmASTNode::Store(ptr_type.clone()));
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 store,
+//             )?;
+//             wasm.tree.append_to(parent_wasm, store)?;
 
-            //Set the return var
-            if let Some(ret) = ret.clone() {
-                let set = wasm.tree.new_node(WasmASTNode::LocalSet(ret));
-                wasm.tree.append_to(then, set)?;
-            }
+//             let get = wasm.tree.new_node(WasmASTNode::LocalGet(tmp_var_name));
+//             wasm.tree.append_to(parent_wasm, get)?;
+//         }
+//         IRNodeType::IfCondition => {
+//             let t = WasmType::from_type(&irast[children[1]].data.return_type);
 
-            //Compile a right hand side *iff* there is an else statement
-            if children.len() > 2 {
-                let el = wasm.tree.new_node(WasmASTNode::Else);
-                compile_irast_recurse(irast, children[2], wasm, used_vars, el)?;
+//             //Return value temporary var (only if there is a return value)
+//             let ret = if t != WasmType::None {
+//                 let s = generate_tmp();
+//                 let id = wasm.tree.new_node(WasmASTNode::Local(s.clone(), t));
+//                 wasm.tree.append_to(parent_wasm, id)?;
+//                 Some(s)
+//             } else {
+//                 None
+//             };
 
-                //Set the return var
-                if let Some(ret) = ret.clone() {
-                    let set = wasm.tree.new_node(WasmASTNode::LocalSet(ret));
-                    wasm.tree.append_to(el, set)?;
-                }
-            }
+//             // First, generate the conditional (note that bools are i32s in wasm)
+//             {
+//                 compile_irast_recurse(
+//                     irast,
+//                     children[0],
+//                     wasm,
+//                     used_vars,
+//                     num_stack_allocations_in_scope,
+//                     parent_wasm,
+//                 )?;
+//             }
 
-            //If there's a return type, push its value to the stack after exiting the if statement block
-            if let Some(ret) = ret {
-                let ret = wasm.tree.new_node(WasmASTNode::LocalGet(ret));
-                wasm.tree.append_to(parent_wasm, ret)?;
-            }
-        }
-        // `(block $b
-        //     (loop $a
-        //        (..)
-        //        (br $a)
-        //     )
-        // )`
-        //
-        // such that a call to `generate_prev_breakpoint_name` returns `$b`
-        IRNodeType::Loop => {
-            let loop_name = generate_breakpoint_name();
-            let block_name = generate_breakpoint_name();
+//             let parent = wasm.tree.new_node(WasmASTNode::If);
+//             wasm.tree.append_to(parent_wasm, parent)?;
 
-            let bl = wasm.tree.new_node(WasmASTNode::Block(block_name));
-            let lo = wasm.tree.new_node(WasmASTNode::Loop(loop_name.clone()));
-            wasm.tree.append_to(bl, lo)?;
-            wasm.tree.append_to(parent_wasm, bl)?;
+//             let then = wasm.tree.new_node(WasmASTNode::Then);
+//             wasm.tree.append_to(parent, then)?;
 
-            compile_irast_recurse(irast, children[0], wasm, used_vars, lo)?;
+//             let mut stack_allocs = 0;
 
-            //For the loop, always jump back to the start (this is what changes for a while loop)
-            let jump_back = wasm.tree.new_node(WasmASTNode::Br(loop_name));
-            wasm.tree.append_to(lo, jump_back)?;
-        }
-        IRNodeType::Break => {
-            let parent = wasm
-                .tree
-                .new_node(WasmASTNode::Br(generate_prev_breakpoint_name()));
-            wasm.tree.append_to(parent_wasm, parent)?;
-        }
-        IRNodeType::LastValueReturn => {
-            //Execute each expression -- all are guaranteed to return the correct types
-            // (either nothing for all but last or some value for the last), so no checking is necessary
+//             compile_irast_recurse(irast, children[1], wasm, used_vars, &mut stack_allocs, then)?;
 
-            for c in children {
-                // println!("{c:?}");
-                compile_irast_recurse(irast, c, wasm, used_vars, parent_wasm)?;
-            }
-        }
-        IRNodeType::ValueConsume => {
-            compile_irast_recurse(irast, children[0], wasm, used_vars, parent_wasm)?;
-        }
-        //Binary ops:
-        //({t}.{op}
-        //  ({child_0})
-        //  ({child_1})
-        //)
-        IRNodeType::Eq
-        | IRNodeType::Ne
-        | IRNodeType::Lt
-        | IRNodeType::Gt
-        | IRNodeType::Le
-        | IRNodeType::Ge
-        | IRNodeType::Add
-        | IRNodeType::Sub
-        | IRNodeType::Mul
-        | IRNodeType::Div => {
-            let parent = wasm.tree.new_node(WasmASTNode::Module);
-            wasm.tree.append_to(parent_wasm, parent)?;
+//             //Set the return var
+//             if let Some(ret) = ret.clone() {
+//                 let set = wasm.tree.new_node(WasmASTNode::LocalSet(ret));
+//                 wasm.tree.append_to(then, set)?;
+//             }
 
-            //Have lhs and rhs append themselves to `parent`
-            compile_irast_recurse(irast, children[0], wasm, used_vars, parent)?;
-            compile_irast_recurse(irast, children[1], wasm, used_vars, parent)?;
+//             //Pop from stack
+//             wasm.tree.append_to(
+//                 then,
+//                 wasm.tree.new_node(WasmASTNode::StackPop(stack_allocs)),
+//             );
 
-            //The type of the wasm operation
-            let t = WasmType::from_type(&irast.tree[children[0]].data.return_type.clone());
+//             //Compile a right hand side *iff* there is an else statement
+//             if children.len() > 2 {
+//                 let mut stack_allocs = 0;
 
-            wasm.tree[parent].data = match irast.tree[curr].data.t {
-                IRNodeType::Eq => WasmASTNode::Eq(t),
-                IRNodeType::Ne => WasmASTNode::Ne(t),
-                IRNodeType::Lt => WasmASTNode::Lt(t),
-                IRNodeType::Gt => WasmASTNode::Gt(t),
-                IRNodeType::Le => WasmASTNode::Le(t),
-                IRNodeType::Ge => WasmASTNode::Ge(t),
-                //
-                IRNodeType::Add => WasmASTNode::Add(t),
-                IRNodeType::Sub => WasmASTNode::Sub(t),
-                IRNodeType::Mul => WasmASTNode::Mul(t),
-                IRNodeType::Div => WasmASTNode::Div(t),
-                _ => unreachable!(),
-            };
-        }
-    }
+//                 let el = wasm.tree.new_node(WasmASTNode::Else);
+//                 compile_irast_recurse(irast, children[2], wasm, used_vars, &mut stack_allocs, el)?;
 
-    Ok(())
-}
+//                 //Set the return var
+//                 if let Some(ret) = ret.clone() {
+//                     let set = wasm.tree.new_node(WasmASTNode::LocalSet(ret));
+//                     wasm.tree.append_to(el, set)?;
+//                 }
+
+//                 //Pop from stack
+//                 wasm.tree
+//                     .append_to(el, wasm.tree.new_node(WasmASTNode::StackPop(stack_allocs)));
+//             }
+
+//             //If there's a return type, push its value to the wasm stack after exiting the if statement block
+//             if let Some(ret) = ret {
+//                 let ret = wasm.tree.new_node(WasmASTNode::LocalGet(ret));
+//                 wasm.tree.append_to(parent_wasm, ret)?;
+//             }
+//         }
+//         // `(block $b
+//         //     (loop $a
+//         //        (..)
+//         //        (br $a)
+//         //     )
+//         // )`
+//         //
+//         // such that a call to `generate_prev_breakpoint_name` returns `$b`
+//         IRNodeType::Loop => {
+//             let loop_name = generate_breakpoint_name();
+//             let block_name = generate_breakpoint_name();
+
+//             let bl = wasm.tree.new_node(WasmASTNode::Block(block_name));
+//             let lo = wasm.tree.new_node(WasmASTNode::Loop(loop_name.clone()));
+//             wasm.tree.append_to(bl, lo)?;
+//             wasm.tree.append_to(parent_wasm, bl)?;
+
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 lo,
+//             )?;
+
+//             //For the loop, always jump back to the start (this is what changes for a while loop)
+//             let jump_back = wasm.tree.new_node(WasmASTNode::Br(loop_name));
+//             wasm.tree.append_to(lo, jump_back)?;
+//         }
+//         IRNodeType::Break => {
+//             let parent = wasm
+//                 .tree
+//                 .new_node(WasmASTNode::Br(generate_prev_breakpoint_name()));
+//             wasm.tree.append_to(parent_wasm, parent)?;
+//         }
+//         IRNodeType::LastValueReturn => {
+//             //Execute each expression -- all are guaranteed to return the correct types
+//             // (either nothing for all but last or some value for the last), so no checking is necessary
+
+//             for c in children {
+//                 // println!("{c:?}");
+//                 compile_irast_recurse(
+//                     irast,
+//                     c,
+//                     wasm,
+//                     used_vars,
+//                     num_stack_allocations_in_scope,
+//                     parent_wasm,
+//                 )?;
+//             }
+//         }
+//         IRNodeType::ValueConsume => {
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 parent_wasm,
+//             )?;
+//         }
+//         //Binary ops:
+//         //({t}.{op}
+//         //  ({child_0})
+//         //  ({child_1})
+//         //)
+//         IRNodeType::Eq
+//         | IRNodeType::Ne
+//         | IRNodeType::Lt
+//         | IRNodeType::Gt
+//         | IRNodeType::Le
+//         | IRNodeType::Ge
+//         | IRNodeType::Add
+//         | IRNodeType::Sub
+//         | IRNodeType::Mul
+//         | IRNodeType::Div => {
+//             let parent = wasm.tree.new_node(WasmASTNode::Module);
+//             wasm.tree.append_to(parent_wasm, parent)?;
+
+//             //Have lhs and rhs append themselves to `parent`
+//             compile_irast_recurse(
+//                 irast,
+//                 children[0],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 parent,
+//             )?;
+//             compile_irast_recurse(
+//                 irast,
+//                 children[1],
+//                 wasm,
+//                 used_vars,
+//                 num_stack_allocations_in_scope,
+//                 parent,
+//             )?;
+
+//             //The type of the wasm operation
+//             let t = WasmType::from_type(&irast.tree[children[0]].data.return_type.clone());
+
+//             wasm.tree[parent].data = match irast.tree[curr].data.t {
+//                 IRNodeType::Eq => WasmASTNode::Eq(t),
+//                 IRNodeType::Ne => WasmASTNode::Ne(t),
+//                 IRNodeType::Lt => WasmASTNode::Lt(t),
+//                 IRNodeType::Gt => WasmASTNode::Gt(t),
+//                 IRNodeType::Le => WasmASTNode::Le(t),
+//                 IRNodeType::Ge => WasmASTNode::Ge(t),
+//                 //
+//                 IRNodeType::Add => WasmASTNode::Add(t),
+//                 IRNodeType::Sub => WasmASTNode::Sub(t),
+//                 IRNodeType::Mul => WasmASTNode::Mul(t),
+//                 IRNodeType::Div => WasmASTNode::Div(t),
+//                 _ => unreachable!(),
+//             };
+//         }
+//     }
+
+//     Ok(())
+// }

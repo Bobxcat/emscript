@@ -30,6 +30,8 @@ pub const STACK_ALLOC_NAME: Lazy<String> =
     Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}stackalloc"));
 
 pub const STACK_POP_NAME: Lazy<String> = Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}stackpop"));
+pub const STACK_POP_MULTIPLE_NAME: Lazy<String> =
+    Lazy::new(|| format!("{PREFIX_HOST_INTRINSIC}stackpop_n"));
 
 /// Formats `n` as a base 62 string using the following values:
 /// `0-9`, `A-Z`, `a-z`
