@@ -864,6 +864,19 @@ fn compile_wir_recurse(
                 compile_wir_recurse(wir, *c, wasm, store, used_variables)?;
             }
         }
+        /*
+        (StackAlloc)
+        (local.set ${name})
+        */
+        WIRNode::AllocLocal(name, t) => {
+            let t = WasmType::from_type(t);
+
+            let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
+            let set = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
+
+            wasm.tree.append_to(parent_wasm, alloc)?;
+            wasm.tree.append_to(parent_wasm, set)?;
+        }
         WIRNode::DropPoint => {
             dbg!("TODO: DropPoint");
         }

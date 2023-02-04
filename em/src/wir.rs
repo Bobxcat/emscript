@@ -92,6 +92,9 @@ pub enum WIRNode {
     /// Set the value of local variable `name` and `type` to `{child}`
     SetLocal(String, Type),
 
+    /// Allocates memory for local variable `name` and `type`
+    AllocLocal(String, Type),
+
     /// When encountering a `DropPoint`, every local value
     /// in the same scope as the drop point is dropped.
     ///
@@ -147,9 +150,25 @@ fn compile_irast_recurse(
             wir.tree.append_to(parent_wir, n)?;
         }
         IRNodeType::FieldRef(_) => todo!("Fields are :("),
-        // Var definitions and assignments are actually the *same* in WIR, since
-        // local variable declaration is implicit (might change)
-        IRNodeType::VarDef(id) | IRNodeType::Assign(id) => {
+
+        // As always, VarDef and Assign are very similar operations
+        IRNodeType::VarDef(id) => {
+            let (lhs_t, lhs_name) = irast[id].name_and_return_type().clone();
+
+            let alloc = wir
+                .tree
+                .new_node(WIRNode::AllocLocal(lhs_name.clone(), lhs_t.clone()));
+
+            let set = wir
+                .tree
+                .new_node(WIRNode::SetLocal(lhs_name.clone(), lhs_t));
+
+            wir.tree.append_to(parent_wir, alloc)?;
+            wir.tree.append_to(parent_wir, set)?;
+
+            compile_irast_recurse(irast, children[0], wir, set)?;
+        }
+        IRNodeType::Assign(id) => {
             let (lhs_t, lhs_name) = irast[id].name_and_return_type().clone();
 
             let set = wir
@@ -229,9 +248,13 @@ fn compile_irast_recurse(
                     // Create the temp var holding the value
                     let tmp_var_name = generate_tmp();
                     let tmp_t = irast[children[0]].data.return_type.clone();
+                    let alloc_tmp = wir
+                        .tree
+                        .new_node(WIRNode::AllocLocal(tmp_var_name.clone(), tmp_t.clone()));
                     let set_tmp = wir
                         .tree
                         .new_node(WIRNode::SetLocal(tmp_var_name.clone(), tmp_t));
+                    wir.tree.append_to(parent_wir, alloc_tmp)?;
                     wir.tree.append_to(parent_wir, set_tmp)?;
 
                     // Set the temp var value to the child of this node

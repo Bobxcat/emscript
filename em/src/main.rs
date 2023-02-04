@@ -26,12 +26,14 @@ use wabt::wat2wasm;
 use wasm::compile_irast;
 use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
-use wasmer::{Function, FunctionEnv, Instance, Memory, MemoryType, Module, Store, TypedFunction};
+use wasmer::{
+    Function, FunctionEnv, Instance, Memory, MemoryType, Module, Pages, Store, TypedFunction,
+};
 use wasmer_vm::{LinearMemory, VMMemory};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport},
-    memory::WAllocatorDefault,
+    memory::{WAllocatorDefault, STACK_SIZE},
     token::tokenize,
     value::{
         custom_types::{insert_custom_type, str_to_type},
@@ -192,7 +194,7 @@ fn compile(
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 20000;
+    const ARGS: i32 = 150;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
@@ -236,6 +238,20 @@ fn compile(
             imports.define("env", "memory", mem);
         }
 
+        // Ensure that `memory` has at *least* enough bytes for the stack
+        {
+            let mut mem = memory.lock();
+            while (mem.size().bytes().0 as u64) < (STACK_SIZE as u64) + (u32::MAX as u64) {
+                mem.grow(Pages(10))?;
+            }
+
+            println!(
+                "Starting memory size: {} Bytes ({} Pages)",
+                mem.size().bytes().0,
+                mem.size().0
+            );
+        }
+
         let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
 
         println!("Instance created. Now grabbing exported method `foo`");
@@ -255,6 +271,7 @@ fn compile(
             let start = SystemTime::now();
 
             for i in 0..ARGS {
+                println!("foo({i})");
                 let f = foo.call(store, i).unwrap();
                 arr_1[i as usize] = f;
                 // println!("{i}: {f}");

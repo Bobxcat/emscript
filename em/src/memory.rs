@@ -160,7 +160,7 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         let mut mem = env.data().memory.lock();
 
         // let view = mem.view(store);
-        while len_bytes < mem.size().bytes().0 as u64 {
+        while len_bytes < mem.size().bytes().0 as u64 - STACK_SIZE as u64 {
             mem.grow(1.into()).expect("Memory failed to grow");
         }
     }
@@ -363,14 +363,16 @@ impl StackAllocator {
         let offset = self.stack_ptr % align;
 
         let alloc_start = self.stack_ptr + offset;
-        let alloc_end = alloc_start + size;
+        let alloc_end = alloc_start + size - 1;
         let allocation = alloc_start..=alloc_end;
 
-        if alloc_end > self.stack_size {
+        if alloc_end >= self.stack_size {
             panic!("Stack overflow");
         }
 
         self.stack_ptr = alloc_end + 1;
+
+        println!("{allocation:?}");
 
         self.allocations.push(allocation);
 
