@@ -341,7 +341,8 @@ pub(crate) struct StackAllocator {
     stack_size: MemoryIndex,
     /// The active allocations on the stack
     allocations: Vec<RangeInclusive<MemoryIndex>>,
-    /// The current end of the stack pointer
+    /// The current end of the stack.
+    /// This is the first free byte which can be allocated
     stack_ptr: MemoryIndex,
 }
 
@@ -362,7 +363,14 @@ impl StackAllocator {
         let offset = self.stack_ptr % align;
 
         let alloc_start = self.stack_ptr + offset;
-        let allocation = alloc_start..=(alloc_start + size);
+        let alloc_end = alloc_start + size;
+        let allocation = alloc_start..=alloc_end;
+
+        if alloc_end > self.stack_size {
+            panic!("Stack overflow");
+        }
+
+        self.stack_ptr = alloc_end + 1;
 
         self.allocations.push(allocation);
 

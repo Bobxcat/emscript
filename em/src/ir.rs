@@ -273,8 +273,7 @@ impl IRAST {
             }
         }
 
-        //Add all methods
-        //Note: this same code exists in `c_ast::ast_to_cast`
+        //Add all host methods (which should not be mangled)
         for (name, imp) in &interface.wasm_imports {
             let mut param_idx = 0;
             let info = IdentInfo::ExternMethod {
@@ -837,9 +836,10 @@ impl IRAST {
         let mut custom_types = custom_types_mut();
         for ident in self.idents.values_mut() {
             let mut mangle = true;
+            let mut s = String::new();
             let var_name = match ident {
                 //`no_mangle_methods` does not include any ExternMethod so they can just be trated normally
-                IdentInfo::Var { name, .. } | IdentInfo::ExternMethod { name, .. } => name,
+                IdentInfo::Var { name, .. } /*| IdentInfo::ExternMethod { name, .. }*/ => name,
                 IdentInfo::Method { name, .. }
                 | IdentInfo::CustomType {
                     mangled_name: name, ..
@@ -851,6 +851,7 @@ impl IRAST {
 
                     name
                 }
+                _ => &mut s,
             };
             if mangle {
                 *var_name = format!("{PREFIX_IDENT}{}_{}", format_compact(ident_count), var_name);

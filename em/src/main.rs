@@ -198,9 +198,6 @@ fn compile(
         // Get a wasm module from `wasm_path_preopt`
         let module = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
 
-        // // Create the memory and add it to the module
-        // let memory = EmMemHandle::new(EmMem::new());
-
         // Define the imports
 
         // Get the environment needed for all the methods
@@ -223,14 +220,23 @@ fn compile(
 
         // But first, drop the current handle to `store` to avoid a perma-lock
         std::mem::drop(store);
-        let imports = interface.get_imports_obj(allocator, &env);
+        let mut imports = interface.get_imports_obj(allocator, &env);
         let mut store = WasmEnv::store();
 
-        let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
+        // Add `memory` as an import
+        {
+            let mem_box = Box::new(memory.clone()) as Box<(dyn LinearMemory + 'static)>;
+            let mem = Memory::new_from_existing(
+                &mut store.as_mut().unwrap(),
+                VMMemory::from_custom(mem_box),
+            );
 
-        // // Finish populating `env`
-        // env.as_mut(store.as_mut().unwrap()).memory =
-        //     Some(instance.exports.get_memory("memory")?.clone());
+            dbg!(mem.ty(store.as_ref().unwrap()));
+
+            imports.define("env", "memory", mem);
+        }
+
+        let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
 
         println!("Instance created. Now grabbing exported method `foo`");
 
@@ -377,13 +383,7 @@ fn start() -> anyhow::Result<()> {
 
     let mem = EmMemHandle::new(EmMem::new());
 
-    let mut store = Store::default();
-
-    // Create a memory using the appropriate handle
-    {
-        let mem_box = Box::new(mem.clone()) as Box<(dyn LinearMemory + 'static)>;
-        Memory::new_from_existing(&mut store, VMMemory::from_custom(mem_box));
-    }
+    let store = Store::default();
 
     let interface = {
         use StdImport::*;

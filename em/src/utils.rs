@@ -14,9 +14,10 @@ use once_cell::sync::Lazy;
 //      still fits within the first `32` characters of the var name, which is when C stops differentiating the var names
 //- Shouldn't  start with `_`: https://stackoverflow.com/questions/25090635/use-and-in-c-programs
 
-pub const PREFIX_TMP: &str = "i_tmp";
+pub const PREFIX_TMP: &str = "tmp";
+pub const PREFIX_BREAKPOINT: &str = "br";
 //Prefix identifiers should have the most underscores, since user-provided idents can start with underscores
-//(For example, naming your variable `_tmp20` shouldn't interfere with anything)
+//(For example, naming your variable `tmp20` shouldn't interfere with anything)
 pub const PREFIX_IDENT: &str = "i_________"; //length 10
 
 /// Prefix for host instrinsics, such as `malloc` and `stack_alloc`

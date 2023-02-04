@@ -216,7 +216,7 @@ pub enum StdImport {
 }
 
 /// * `wasm_imports` - A mapping from the names of methods to their corresponding import
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct InterfaceDef {
     pub wasm_imports: HashMap<String, MethodImport>,
     std_imports: HashSet<StdImport>,
@@ -237,7 +237,10 @@ impl InterfaceDef {
     const STACKPOPN_SIGNATURE: ([wasmer::Type; 1], [wasmer::Type; 0]) = ([wasmer::Type::I32], []);
 
     pub fn new() -> Self {
-        let mut s = Self::default();
+        let mut s = Self {
+            wasm_imports: Default::default(),
+            std_imports: Default::default(),
+        };
 
         let ptr_type = Type::ptr_type();
 
@@ -315,10 +318,8 @@ impl InterfaceDef {
             };
         }
 
-        Self {
-            wasm_imports: Default::default(),
-            std_imports: std_imps,
-        }
+        s.std_imports = std_imps;
+        s
     }
 
     /// Adds memory allocator functions to `wasm_imports` with functionality included

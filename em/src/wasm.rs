@@ -181,7 +181,7 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
         Le(t) => format!("({t}.le_s {})", children!()),
         Ge(t) => format!("({t}.ge_s {})", children!()),
 
-        Empty => format!("({})", children!()),
+        Empty => format!("{}", children!()),
     }
 }
 
@@ -371,7 +371,7 @@ impl Display for ImportObjType {
             f,
             "{}",
             match self {
-                ImportObjType::Memory(wasm_name) => format!("(memory ${wasm_name})"),
+                ImportObjType::Memory(wasm_name) => format!("(memory ${wasm_name} 0)"),
                 ImportObjType::Func {
                     wasm_name,
                     parameters,
@@ -490,7 +490,10 @@ enum WasmASTNode {
     // GlobalGet(String),
     /// `(local.get ${name})`
     LocalGet(String),
-    /// `(local.set ${name} {children})`
+    /// `(local.set ${name})`
+    ///
+    /// Note that `LocalSet` does *not* accept children, since the
+    /// new value must be loaded prior to this instruction
     LocalSet(String),
     // /// `(local ${name} {t})`
     // Local(String, WasmType),
@@ -509,9 +512,9 @@ enum WasmASTNode {
     Mul(WasmType),
     Div(WasmType),
 
-    /// `({child_0} {child_1} ... {child_n})`
+    /// `{child_0} {child_1} ... {child_n}`
     ///
-    /// Useful to ensure a list of commands is treated as one
+    /// Note that this does not group the children in parentheses
     Empty,
 }
 
@@ -587,18 +590,71 @@ pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
 
     let wir = wir::compile_irast(irast)?;
 
-    compile_wir(&wir)
+    compile_wir(&wir, irast)
 }
 
-fn compile_wir(wir: &WIRAST) -> anyhow::Result<WasmAST> {
+fn compile_wir(wir: &WIRAST, irast: &IRAST) -> anyhow::Result<WasmAST> {
     let mut wasm = WasmAST::new();
+
+    let wasm_head = wasm.tree.new_node(WasmASTNode::Empty);
+
     compile_wir_recurse(
         wir,
         wir.tree.find_head().unwrap(),
         &mut wasm,
-        0.into(),
+        wasm_head,
         &mut HashSet::new(),
     )?;
+
+    // Get every module
+    let modules = wasm.tree[wasm_head].children.clone();
+
+    // Add stuff at the beginning of each module (i.e. imports from the host)
+
+    for parent in modules {
+        // Import "memory"
+        {
+            let mem = wasm.tree.new_node(WasmASTNode::Import {
+                env: "env".into(),
+                imp_name: "memory".into(),
+                t: ImportObjType::Memory("memory".into()),
+            });
+
+            wasm.tree.prepend_to(parent, mem)?;
+        }
+
+        // Import everything else
+        for (_, info) in irast.idents.iter().map(|(a, b)| (*a, b.clone())) {
+            // let (ret, name) = imp.name_and_return_type();
+
+            match info {
+                IdentInfo::ExternMethod {
+                    mod_name,
+                    imp_name,
+                    name,
+                    params,
+                    return_type,
+                } => {
+                    let n = wasm.tree.new_node(WasmASTNode::Import {
+                        env: mod_name.clone(),
+                        imp_name: imp_name.clone(),
+
+                        t: ImportObjType::Func {
+                            wasm_name: name.clone(),
+                            parameters: params
+                                .iter()
+                                .map(|(_, t)| WasmType::from_type(t))
+                                .collect(),
+                            ret: WasmType::from_type(&return_type),
+                        },
+                    });
+                    wasm.tree.prepend_to(parent, n)?;
+                }
+                _ => (),
+            }
+        }
+    }
+
     Ok(wasm)
 }
 
@@ -613,6 +669,7 @@ fn compile_wir_recurse(
     match &wir.tree[curr].data {
         WIRNode::Module => {
             let parent = wasm.tree.new_node(WasmASTNode::Module);
+            wasm.tree.append_to(parent_wasm, parent)?;
             for c in children {
                 compile_wir_recurse(wir, c, wasm, parent, used_variables)?;
             }
@@ -628,14 +685,47 @@ fn compile_wir_recurse(
             let f = wasm.tree.new_node(WasmASTNode::Empty);
             wasm.tree.append_to(parent_wasm, f)?;
 
+            // At the beginning of the method body, move each parameter into memory
+
+            let params: Vec<_> = params
+                .iter()
+                .map(|(name, t)| (name.clone(), WasmType::from_type(t)))
+                .collect();
+
+            for (name, t) in params.iter() {
+                let param_name = format!("param_{name}");
+
+                // Steps:
+                // 1- Register the local variable in `used_variables` to guarantee instantiation
+                // 2- Allocate the local variable in stack
+                // 3- Copy the param variable to stack at location given by local variable
+
+                // 1
+                used_variables.insert((name.clone(), t.clone()));
+
+                // 2
+                let var_dec = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
+                let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
+                wasm.tree.append_to(f, alloc)?;
+                wasm.tree.append_to(f, var_dec)?;
+
+                // 3
+                let store = wasm.tree.new_node(WasmASTNode::Store(t.clone()));
+                let loc = wasm.tree.new_node(WasmASTNode::LocalGet(name.clone()));
+                let val = wasm.tree.new_node(WasmASTNode::LocalGet(param_name));
+                wasm.tree.append_to(store, loc)?;
+                wasm.tree.append_to(store, val)?;
+                wasm.tree.append_to(f, store)?;
+            }
+
             compile_wir_recurse(wir, children[0], wasm, f, &mut used_variables)?;
 
             let f_dat = WasmASTNode::FuncDef {
                 name: name.clone(),
                 name_export: name_export.clone(),
                 params: params
-                    .iter()
-                    .map(|(name, t)| (name.clone(), WasmType::from_type(t)))
+                    .into_iter()
+                    .map(|(name, t)| (format!("param_{name}"), t))
                     .collect(),
                 ret: vec![WasmType::from_type(ret)],
                 used_variables,
@@ -748,6 +838,14 @@ fn compile_wir_recurse(
             (local.get ${name})
             {child}
         )
+
+        OR
+
+        {previous node, which puts the right value on the stack}
+        (t.store
+            (local.get ${name})
+        )
+
         */
         WIRNode::SetLocal(name, t) => {
             let t = WasmType::from_type(t);
@@ -762,9 +860,13 @@ fn compile_wir_recurse(
             wasm.tree.append_to(store, local_get)?;
             wasm.tree.append_to(parent_wasm, store)?;
 
-            compile_wir_recurse(wir, children[0], wasm, store, used_variables)?;
+            if let Some(c) = children.get(0) {
+                compile_wir_recurse(wir, *c, wasm, store, used_variables)?;
+            }
         }
-        WIRNode::DropPoint => todo!(),
+        WIRNode::DropPoint => {
+            dbg!("TODO: DropPoint");
+        }
 
         // Binary operations translate more-or-less directly, with the exception of
         // custom type implementations for ops (which are function calls)
@@ -797,6 +899,10 @@ fn compile_wir_recurse(
                 _ => unreachable!(),
             });
             wasm.tree.append_to(parent_wasm, parent)?;
+
+            for c in children {
+                compile_wir_recurse(wir, c, wasm, parent, used_variables)?;
+            }
         }
         WIRNode::Empty => {
             let parent = wasm.tree.new_node(WasmASTNode::Empty);
