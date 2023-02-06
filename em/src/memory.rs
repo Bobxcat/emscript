@@ -160,7 +160,7 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         let mut mem = env.data().memory.lock();
 
         // let view = mem.view(store);
-        while len_bytes < mem.size().bytes().0 as u64 - STACK_SIZE as u64 {
+        while len_bytes + (STACK_SIZE as u64) < mem.size().bytes().0 as u64 {
             mem.grow(1.into()).expect("Memory failed to grow");
         }
     }

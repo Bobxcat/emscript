@@ -194,7 +194,7 @@ fn compile(
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 150;
+    const ARGS: i32 = 4;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
@@ -225,13 +225,15 @@ fn compile(
         let mut imports = interface.get_imports_obj(allocator, &env);
         let mut store = WasmEnv::store();
 
+        println!("a");
+
         // Add `memory` as an import
         {
             let mem_box = Box::new(memory.clone()) as Box<(dyn LinearMemory + 'static)>;
-            let mem = Memory::new_from_existing(
-                &mut store.as_mut().unwrap(),
-                VMMemory::from_custom(mem_box),
-            );
+            let mem = VMMemory::from_custom(mem_box);
+            // println!("{mem:#?}");
+            //
+            let mem = Memory::new_from_existing(&mut store.as_mut().unwrap(), mem);
 
             dbg!(mem.ty(store.as_ref().unwrap()));
 
@@ -240,10 +242,17 @@ fn compile(
 
         // Ensure that `memory` has at *least* enough bytes for the stack
         {
+            println!("c");
             let mut mem = memory.lock();
-            while (mem.size().bytes().0 as u64) < (STACK_SIZE as u64) + (u32::MAX as u64) {
-                mem.grow(Pages(10))?;
-            }
+            println!("d");
+
+            // while (mem.size().bytes().0 as u64) < (STACK_SIZE as u64) + (u32::MAX as u64) {
+            //     println!("{}", mem.size().bytes().0);
+            //     mem.grow(Pages(1))?;
+            //     mem.grow(Pages(
+            //         (STACK_SIZE as u64).div_ceil(Pages(1).bytes().0 as u64) as u32,
+            //     ))?;
+            // }
 
             println!(
                 "Starting memory size: {} Bytes ({} Pages)",
@@ -389,6 +398,7 @@ fn main() {
 }
 
 fn start() -> anyhow::Result<()> {
+    std::env::set_var("RUST_BACKTRACE", "1");
     println!(
         "Memory index is: {} bytes ({} bits)",
         std::mem::size_of::<MemoryIndex>(),

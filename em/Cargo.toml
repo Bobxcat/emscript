@@ -28,4 +28,7 @@ em_core = { path = "../em_core" }
 wasm-opt = "0"
 wabt = "0"
 
+# # For `EmMem`
+# memmap = "0.7"
+
 derive_more = "0"

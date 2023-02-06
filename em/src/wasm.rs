@@ -163,7 +163,7 @@ fn wasm_ast_display_recurse(ast: &WasmAST, curr: NodeId) -> String {
 
         // GlobalGet(s) => format!("(global.get ${s}"),
         LocalGet(s) => format!("(local.get ${s})"),
-        LocalSet(s) => format!("(local.set ${s} {})", children!()),
+        LocalSet(s) => format!("(local.set ${s})"),
 
         // Local(s, t) => format!("(local ${s} {t})"),
         Const(val) => format!("({}.const {val})", val.t()),
