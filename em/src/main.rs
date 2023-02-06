@@ -27,7 +27,8 @@ use wasm::compile_irast;
 use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
 use wasmer::{
-    Function, FunctionEnv, Instance, Memory, MemoryType, Module, Pages, Store, TypedFunction,
+    Extern, Function, FunctionEnv, Instance, Memory, MemoryType, Module, Pages, Store,
+    TypedFunction,
 };
 use wasmer_vm::{LinearMemory, VMMemory};
 
@@ -231,20 +232,19 @@ fn compile(
         {
             let mem_box = Box::new(memory.clone()) as Box<(dyn LinearMemory + 'static)>;
             let mem = VMMemory::from_custom(mem_box);
+            println!("{:#?}", mem.ty());
             // println!("{mem:#?}");
             //
             let mem = Memory::new_from_existing(&mut store.as_mut().unwrap(), mem);
 
             dbg!(mem.ty(store.as_ref().unwrap()));
 
-            imports.define("env", "memory", mem);
+            imports.define("env", "memory", Extern::Memory(mem));
         }
 
         // Ensure that `memory` has at *least* enough bytes for the stack
         {
-            println!("c");
             let mut mem = memory.lock();
-            println!("d");
 
             // while (mem.size().bytes().0 as u64) < (STACK_SIZE as u64) + (u32::MAX as u64) {
             //     println!("{}", mem.size().bytes().0);

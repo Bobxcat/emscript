@@ -93,7 +93,7 @@ unsafe impl Sync for EmMem {}
 
 impl LinearMemory for EmMem {
     fn ty(&self) -> MemoryType {
-        MemoryType::new(Pages(0), None, false)
+        MemoryType::new(Pages(0), None, true)
     }
 
     fn size(&self) -> Pages {
@@ -102,7 +102,7 @@ impl LinearMemory for EmMem {
 
     fn style(&self) -> MemoryStyle {
         MemoryStyle::Dynamic {
-            offset_guard_size: u32::MAX as u64,
+            offset_guard_size: u32::MAX as u64 / 2 + 1,
         }
     }
 
