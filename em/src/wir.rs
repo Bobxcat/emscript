@@ -155,15 +155,16 @@ fn compile_irast_recurse(
         IRNodeType::VarDef(id) => {
             let (lhs_t, lhs_name) = irast[id].name_and_return_type().clone();
 
-            let alloc = wir
-                .tree
-                .new_node(WIRNode::AllocLocal(lhs_name.clone(), lhs_t.clone()));
+            // Allocation is done at the method head
+            // let alloc = wir
+            //     .tree
+            //     .new_node(WIRNode::AllocLocal(lhs_name.clone(), lhs_t.clone()));
 
             let set = wir
                 .tree
                 .new_node(WIRNode::SetLocal(lhs_name.clone(), lhs_t));
 
-            wir.tree.append_to(parent_wir, alloc)?;
+            // wir.tree.append_to(parent_wir, alloc)?;
             wir.tree.append_to(parent_wir, set)?;
 
             compile_irast_recurse(irast, children[0], wir, set)?;

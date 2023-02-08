@@ -629,22 +629,23 @@ fn compile_wir_recurse(
                 .map(|(name, t)| (name.clone(), WasmType::from_type(t)))
                 .collect();
 
+            // Allocate *both* parameters and used local variables
             for (name, t) in params.iter() {
+                // println!("{name}");
                 let param_name = format!("param_{name}");
 
                 // Steps:
                 // 1- Register the local variable in `used_variables` to guarantee instantiation
-                // 2- Allocate the local variable in stack
-                // 3- Copy the param variable to stack at location given by local variable
+                // 2- Copy the param variable to stack at location given by local variable
 
                 // 1
                 used_variables.insert((name.clone(), t.clone()));
 
-                // 2
-                let var_dec = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
-                let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
-                wasm.tree.append_to(f, alloc)?;
-                wasm.tree.append_to(f, var_dec)?;
+                // // 2
+                // let var_dec = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
+                // let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
+                // wasm.tree.append_to(f, alloc)?;
+                // wasm.tree.append_to(f, var_dec)?;
 
                 // 3
                 let store = wasm.tree.new_node(WasmASTNode::Store(t.clone()));
@@ -656,6 +657,15 @@ fn compile_wir_recurse(
             }
 
             compile_wir_recurse(wir, children[0], wasm, f, &mut used_variables)?;
+
+            for (name, t) in used_variables.iter() {
+                // Assign the variable to a stack allocation result
+
+                let var_dec = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
+                let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
+                wasm.tree.prepend_to(f, var_dec)?;
+                wasm.tree.prepend_to(f, alloc)?;
+            }
 
             let f_dat = WasmASTNode::FuncDef {
                 name: name.clone(),

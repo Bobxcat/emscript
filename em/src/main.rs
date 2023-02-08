@@ -220,7 +220,7 @@ fn compile(
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 500;
+    const ARGS: i32 = 10000;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
