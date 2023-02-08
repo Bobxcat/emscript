@@ -220,7 +220,7 @@ fn compile(
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 10000;
+    const ARGS: i32 = 100000;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
@@ -284,7 +284,7 @@ fn compile(
         println!("Export method `foo` found. Now calling `foo`");
         let store = store.as_mut().unwrap();
 
-        let mut arr_1 = [0; ARGS as usize];
+        let mut arr_1 = vec![0; ARGS as usize];
 
         {
             let start = SystemTime::now();
@@ -303,7 +303,8 @@ fn compile(
 
         println!("Calling native method `foo`");
 
-        let mut arr_2 = [0; ARGS as usize];
+        let mut arr_2 = vec![0; ARGS as usize];
+        // let arr_2 = &mut [0; ARGS as usize];
 
         {
             let start = SystemTime::now();

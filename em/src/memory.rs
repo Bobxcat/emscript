@@ -396,9 +396,11 @@ impl StackAllocator {
     }
     /// Removes the `n` most recent allocations on the stack
     pub fn pop_n(&mut self, n: MemoryIndex) {
+        let s = self.stack_ptr;
         for _ in 0..n {
             self.pop();
         }
+        // println!("ptr: {} -> {}", s, self.stack_ptr);
     }
     /// Invalidates all active allocations and resets the stack_ptr to 0.
     /// This is a fairly cheap operation

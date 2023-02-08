@@ -17,7 +17,7 @@ once_cell = "1"
 wasmer = { version = "3.1", features = ["wat"] }
 wasmer-vm = "3.1"
 wasmer-compiler-cranelift = "3.1"
-# wasmer-compiler-llvm = "3.1"
+wasmer-compiler-llvm = "3.1"
 
 # With wasmer 3.1, default engine is builtin
 # wasmer-engine-universal = "2.3"

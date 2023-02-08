@@ -658,13 +658,21 @@ fn compile_wir_recurse(
 
             compile_wir_recurse(wir, children[0], wasm, f, &mut used_variables)?;
 
+            let mut stack_allocations = 0;
+
             for (name, t) in used_variables.iter() {
+                stack_allocations += 1;
                 // Assign the variable to a stack allocation result
 
                 let var_dec = wasm.tree.new_node(WasmASTNode::LocalSet(name.clone()));
                 let alloc = wasm.tree.new_node(WasmASTNode::StackAlloc(t.size(), 1));
                 wasm.tree.prepend_to(f, var_dec)?;
                 wasm.tree.prepend_to(f, alloc)?;
+            }
+
+            {
+                let v = wasm.tree.new_node(WasmASTNode::StackPop(stack_allocations));
+                wasm.tree.append_to(f, v)?;
             }
 
             let f_dat = WasmASTNode::FuncDef {
