@@ -525,69 +525,6 @@ impl Display for WasmASTNode {
 }
 
 pub fn compile_irast(irast: &IRAST) -> anyhow::Result<WasmAST> {
-    // let mut ast = WasmAST::new();
-    // let ast_head = ast.tree.new_node(WasmASTNode::Module);
-
-    // //Add all imported methods
-    // for (_, info) in &irast.idents {
-    //     match info {
-    //         IdentInfo::ExternMethod {
-    //             mod_name,
-    //             imp_name,
-    //             name,
-    //             params,
-    //             return_type,
-    //         } => {
-    //             let n = ast.tree.new_node(WasmASTNode::Import {
-    //                 env: mod_name.clone(),
-    //                 imp_name: imp_name.clone(),
-
-    //                 t: ImportObjType::Func {
-    //                     wasm_name: name.clone(),
-    //                     parameters: params.iter().map(|(_, t)| WasmType::from_type(t)).collect(),
-    //                     ret: WasmType::from_type(&return_type),
-    //                 },
-    //             });
-    //             ast.tree.append_to(ast_head, n)?;
-    //         }
-    //         _ => (),
-    //     }
-    // }
-
-    // // Import the memory
-    // {
-    //     let imp = ast.tree.new_node(WasmASTNode::Import {
-    //         env: "env".into(),
-    //         imp_name: "memory".into(),
-    //         t: ImportObjType::Memory("memory".into()),
-    //     });
-    // }
-
-    // //Add the memory and export it
-    // {
-    //     // let mem = ast.tree.new_node(WasmASTNode::Memory);
-    //     // ast.tree.append_to(ast_head, mem)?;
-
-    //     // let exp = ast.tree.new_node(WasmASTNode::Export(
-    //     //     ExportObjType::Memory("memory".into()),
-    //     //     "memory".into(),
-    //     // ));
-    //     // ast.tree.append_to(ast_head, exp)?;
-    // }
-
-    // compile_irast_recurse(
-    //     irast,
-    //     irast.tree.find_head().unwrap(),
-    //     &mut ast,
-    //     &mut HashSet::new(),
-    //     &mut 0,
-    //     ast_head,
-    // )?;
-
-    // println!("\n\n{ast:#?}\n\n");
-
-    // Ok(ast)
-
     let wir = wir::compile_irast(irast)?;
 
     compile_wir(&wir, irast)
@@ -612,16 +549,6 @@ fn compile_wir(wir: &WIRAST, irast: &IRAST) -> anyhow::Result<WasmAST> {
     // Add stuff at the beginning of each module (i.e. imports from the host)
 
     for parent in modules {
-        // // Import "memory"
-        // {
-        //     let mem = wasm.tree.new_node(WasmASTNode::Import {
-        //         env: "env".into(),
-        //         imp_name: "memory".into(),
-        //         t: ImportObjType::Memory("memory".into()),
-        //     });
-
-        //     wasm.tree.prepend_to(parent, mem)?;
-        // }
         // Export "memory"
         {
             let mem = wasm.tree.new_node(WasmASTNode::Export(
