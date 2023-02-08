@@ -7,6 +7,7 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::PathBuf,
+    ptr::NonNull,
     str::FromStr,
     sync::{Arc, Mutex, MutexGuard},
     time::SystemTime,
@@ -14,7 +15,7 @@ use std::{
 
 use em_core::memory::MemoryIndex;
 
-use em_mem::{EmMem, EmMemHandle};
+// use em_mem::{EmMem, EmMemHandle};
 use interface::InterfaceDef;
 use ir::IRAST;
 use once_cell::sync::Lazy;
@@ -27,10 +28,10 @@ use wasm::compile_irast;
 use wasm_opt::OptimizationOptions;
 // use wasm_opt::{Feature, OptimizationOptions};
 use wasmer::{
-    Extern, Function, FunctionEnv, Instance, Memory, MemoryType, Module, Pages, Store,
-    TypedFunction,
+    vm::VMMemoryDefinition, AsStoreMut, AsStoreRef, Extern, Function, FunctionEnv, Instance,
+    Memory, MemoryType, Module, Pages, Store, StoreMut, StoreRef, TypedFunction,
 };
-use wasmer_vm::{LinearMemory, VMMemory};
+use wasmer_vm::{InternalStoreHandle, LinearMemory, VMMemory};
 
 use crate::{
     interface::{compile_api, MethodImport, StdImport},
@@ -131,17 +132,31 @@ mod wir;
 static WASM_STORE: Lazy<Mutex<Option<Store>>> = Lazy::new(|| Mutex::new(None));
 
 pub struct WasmEnv {
-    pub memory: EmMemHandle,
+    pub mem: Option<InternalStoreHandle<VMMemory>>,
 }
 
 impl WasmEnv {
     pub fn store() -> MutexGuard<'static, Option<Store>> {
         WASM_STORE.lock().unwrap()
     }
-    pub fn mem<'a>(&'a self) -> MutexGuard<'a, EmMem> {
-        self.memory.lock()
+    pub fn mem<'a>(&self, store: &'a mut MutexGuard<'static, Option<Store>>) -> &'a mut VMMemory {
+        let store: &'a mut Store = store.as_mut().unwrap();
+
+        self.mem.unwrap().get_mut(store.objects_mut())
+    }
+    pub fn mem_def(
+        &self,
+        store: &mut MutexGuard<'static, Option<Store>>,
+    ) -> NonNull<VMMemoryDefinition> {
+        // let store = Self::store();
+        self.mem
+            .unwrap()
+            .get(store.as_mut().unwrap().objects_mut())
+            .vmmemory()
     }
 }
+
+unsafe impl Send for WasmEnv {}
 
 /// * `raw` - The raw emscript text to be compiled
 /// * `cfg` - The runtime configuration
@@ -157,8 +172,7 @@ fn compile(
     _cfg: RuntimeCfg,
     mut interface: InterfaceDef,
     store: Store,
-    memory: EmMemHandle,
-
+    // memory: EmMemHandle,
     implement_interface_methods: impl FnOnce(&mut InterfaceDef, &mut Store, &FunctionEnv<WasmEnv>),
 ) -> anyhow::Result<Instance> {
     // Set WASM_STORE
@@ -195,7 +209,7 @@ fn compile(
     File::create(&wasm_path_preopt)?.write_all(wasm)?;
 
     println!("=====Running unoptimized=====");
-    const ARGS: i32 = 4;
+    const ARGS: i32 = 500;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
@@ -204,14 +218,7 @@ fn compile(
         // Define the imports
 
         // Get the environment needed for all the methods
-        let env = {
-            FunctionEnv::new(
-                store.as_mut().unwrap(),
-                WasmEnv {
-                    memory: memory.clone(),
-                },
-            )
-        };
+        let env = { FunctionEnv::new(store.as_mut().unwrap(), WasmEnv { mem: None }) };
 
         // Populate `interface` with method implementations
         implement_interface_methods(&mut interface, store.as_mut().unwrap(), &env);
@@ -223,45 +230,29 @@ fn compile(
 
         // But first, drop the current handle to `store` to avoid a perma-lock
         std::mem::drop(store);
-        let mut imports = interface.get_imports_obj(allocator, &env);
+        let imports = interface.get_imports_obj(allocator, &env);
         let mut store = WasmEnv::store();
 
-        println!("a");
-
-        // Add `memory` as an import
-        {
-            let mem_box = Box::new(memory.clone()) as Box<(dyn LinearMemory + 'static)>;
-            let mem = VMMemory::from_custom(mem_box);
-            println!("{:#?}", mem.ty());
-            // println!("{mem:#?}");
-            //
-            let mem = Memory::new_from_existing(&mut store.as_mut().unwrap(), mem);
-
-            dbg!(mem.ty(store.as_ref().unwrap()));
-
-            imports.define("env", "memory", Extern::Memory(mem));
-        }
-
-        // Ensure that `memory` has at *least* enough bytes for the stack
-        {
-            let mut mem = memory.lock();
-
-            // while (mem.size().bytes().0 as u64) < (STACK_SIZE as u64) + (u32::MAX as u64) {
-            //     println!("{}", mem.size().bytes().0);
-            //     mem.grow(Pages(1))?;
-            //     mem.grow(Pages(
-            //         (STACK_SIZE as u64).div_ceil(Pages(1).bytes().0 as u64) as u32,
-            //     ))?;
-            // }
-
-            println!(
-                "Starting memory size: {} Bytes ({} Pages)",
-                mem.size().bytes().0,
-                mem.size().0
-            );
-        }
-
         let instance = Instance::new(store.as_mut().unwrap(), &module, &imports)?;
+
+        // Ensure that the memory can fit the stack
+        {
+            let m = instance.exports.get_memory("memory")?;
+            let delta = Pages(STACK_SIZE.div_ceil(Pages(1).bytes().0 as MemoryIndex));
+            m.grow(store.as_mut().unwrap(), delta)?;
+        }
+
+        // Finish setting up `WasmEnv`
+        {
+            let m = instance.exports.get_extern("memory").unwrap();
+            let m = m.to_vm_extern();
+            let m = match m {
+                wasmer::vm::VMExtern::Memory(m) => m,
+                _ => panic!("Expected export `memory` to be a memory"),
+            };
+
+            env.as_mut(store.as_mut().unwrap()).mem = Some(m);
+        }
 
         println!("Instance created. Now grabbing exported method `foo`");
 
@@ -280,10 +271,9 @@ fn compile(
             let start = SystemTime::now();
 
             for i in 0..ARGS {
-                println!("foo({i})");
+                // println!("foo({i})");
                 let f = foo.call(store, i).unwrap();
                 arr_1[i as usize] = f;
-                // println!("{i}: {f}");
             }
 
             println!(
@@ -335,6 +325,7 @@ fn compile(
         }
 
         assert_eq!(arr_1, arr_2);
+        println!("=====Foo equality assertion passed!=====");
 
         // Finally, return the instance created after much effort
         // Ok(instance)
@@ -398,7 +389,7 @@ fn main() {
 }
 
 fn start() -> anyhow::Result<()> {
-    std::env::set_var("RUST_BACKTRACE", "1");
+    // std::env::set_var("RUST_BACKTRACE", "1");
     println!(
         "Memory index is: {} bytes ({} bits)",
         std::mem::size_of::<MemoryIndex>(),
@@ -408,7 +399,7 @@ fn start() -> anyhow::Result<()> {
 
     let _alloc = Arc::new(Mutex::new(WAllocatorDefault::<64>::default()));
 
-    let mem = EmMemHandle::new(EmMem::new());
+    // let mem = EmMemHandle::new(EmMem::new());
 
     let store = Store::default();
 
@@ -524,7 +515,7 @@ fn start() -> anyhow::Result<()> {
         },
         interface,
         store,
-        mem.clone(),
+        // mem.clone(),
         // Implement non-core custom methods
         |interface, store, _env| {
             //`add`

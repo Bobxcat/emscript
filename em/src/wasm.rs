@@ -612,14 +612,26 @@ fn compile_wir(wir: &WIRAST, irast: &IRAST) -> anyhow::Result<WasmAST> {
     // Add stuff at the beginning of each module (i.e. imports from the host)
 
     for parent in modules {
-        // Import "memory"
-        {
-            let mem = wasm.tree.new_node(WasmASTNode::Import {
-                env: "env".into(),
-                imp_name: "memory".into(),
-                t: ImportObjType::Memory("memory".into()),
-            });
+        // // Import "memory"
+        // {
+        //     let mem = wasm.tree.new_node(WasmASTNode::Import {
+        //         env: "env".into(),
+        //         imp_name: "memory".into(),
+        //         t: ImportObjType::Memory("memory".into()),
+        //     });
 
+        //     wasm.tree.prepend_to(parent, mem)?;
+        // }
+        // Export "memory"
+        {
+            let mem = wasm.tree.new_node(WasmASTNode::Export(
+                ExportObjType::Memory("memory".into()),
+                "memory".into(),
+            ));
+
+            wasm.tree.prepend_to(parent, mem)?;
+
+            let mem = wasm.tree.new_node(WasmASTNode::Memory);
             wasm.tree.prepend_to(parent, mem)?;
         }
 

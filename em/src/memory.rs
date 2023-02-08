@@ -6,6 +6,7 @@ use em_core::memory::MemoryIndex;
 
 use wasmer::FunctionEnvMut;
 use wasmer_vm::LinearMemory;
+// use wasmer_vm::LinearMemory;
 
 use crate::WasmEnv;
 
@@ -154,15 +155,20 @@ impl<const CHUNK_SIZE: MemoryIndex> WAllocatorDefault<CHUNK_SIZE> {
         self.len += new_chunks;
         let len_bytes = (self.len.0 * CHUNK_SIZE) as u64;
 
+        // let mem = env.data().mem_def();
+        // let store = store.as_mut().unwrap();
+
         let mut store = WasmEnv::store();
-        let store = store.as_mut().unwrap();
 
-        let mut mem = env.data().memory.lock();
-
-        // let view = mem.view(store);
+        let mem = env.data().mem(&mut store);
         while len_bytes + (STACK_SIZE as u64) < mem.size().bytes().0 as u64 {
             mem.grow(1.into()).expect("Memory failed to grow");
         }
+
+        // // let view = mem.view(store);
+        // while len_bytes + (STACK_SIZE as u64) < mem.size().bytes().0 as u64 {
+        //     mem.grow(1.into()).expect("Memory failed to grow");
+        // }
     }
     /// Searches `allocated` for the given start index. Follows binary search rules, so
     /// returns `Ok(idx)` if the matching start index was found. Otherwise, returns `Err(idx)`, which
@@ -372,7 +378,7 @@ impl StackAllocator {
 
         self.stack_ptr = alloc_end + 1;
 
-        println!("{allocation:?}");
+        // println!("{allocation:?}");
 
         self.allocations.push(allocation);
 

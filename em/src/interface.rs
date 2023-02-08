@@ -17,6 +17,7 @@ use crate::{
     WasmEnv,
 };
 
+use em_core::memory::MemoryIndex;
 use once_cell::sync::Lazy;
 use pomelo::pomelo;
 use wasmer::{Function, FunctionEnv, FunctionEnvMut, Imports};
@@ -369,40 +370,57 @@ impl InterfaceDef {
             }
         }
 
-        let stack_allocator = Arc::new(Mutex::new(StackAllocator::new(STACK_SIZE)));
+        static STACK_ALLOCATOR: Lazy<Mutex<StackAllocator>> =
+            Lazy::new(|| Mutex::new(StackAllocator::new(STACK_SIZE)));
 
         // `stack_alloc`
         {
-            let allocator = stack_allocator.clone();
+            fn stack_alloc(size: MemoryIndex, align: MemoryIndex) -> MemoryIndex {
+                let mut alloc = STACK_ALLOCATOR.lock().unwrap();
+                alloc.alloc(size, align)
+            }
+
             let imp = MethodImport {
                 mod_name: "env".to_string(),
                 method_name: STACK_ALLOC_NAME.to_string(),
                 params: vec![ptr_type.clone(), ptr_type.clone()],
                 ret: ptr_type.clone(),
-                f: Some(Function::new(
-                    store,
-                    Self::STACKALLOC_SIGNATURE,
-                    move |args: &[wasmer::Value]| {
-                        let (size, align) = (
-                            wasm_value_to_mem_idx(args[0].clone()),
-                            wasm_value_to_mem_idx(args[1].clone()),
-                        );
-                        let mut allocator = allocator.lock().expect("stack_alloc failed to lock");
-                        let ret = allocator.alloc(size, align);
-
-                        Ok(vec![mem_idx_to_wasm_value(ret)])
-                    },
-                )),
+                f: Some(Function::new_typed(store, stack_alloc)),
             };
 
             if let Some(prev) = self.insert(imp) {
                 println!("importing `stack_alloc` overrided the following import: {prev:#?} (this should be happen and should override a stack_alloc declaration)");
             }
+
+            // let allocator = stack_allocator.clone();
+            // let imp = MethodImport {
+            //     mod_name: "env".to_string(),
+            //     method_name: STACK_ALLOC_NAME.to_string(),
+            //     params: vec![ptr_type.clone(), ptr_type.clone()],
+            //     ret: ptr_type.clone(),
+            //     f: Some(Function::new(
+            //         store,
+            //         Self::STACKALLOC_SIGNATURE,
+            //         move |args: &[wasmer::Value]| {
+            //             let (size, align) = (
+            //                 wasm_value_to_mem_idx(args[0].clone()),
+            //                 wasm_value_to_mem_idx(args[1].clone()),
+            //             );
+            //             let mut allocator = allocator.lock().expect("stack_alloc failed to lock");
+            //             let ret = allocator.alloc(size, align);
+
+            //             Ok(vec![mem_idx_to_wasm_value(ret)])
+            //         },
+            //     )),
+            // };
+
+            // if let Some(prev) = self.insert(imp) {
+            //     println!("importing `stack_alloc` overrided the following import: {prev:#?} (this should be happen and should override a stack_alloc declaration)");
+            // }
         }
 
         //`stack_pop_n`
         {
-            let allocator = stack_allocator.clone();
             let imp = MethodImport {
                 mod_name: "env".to_string(),
                 method_name: STACK_POP_MULTIPLE_NAME.to_string(),
@@ -413,7 +431,8 @@ impl InterfaceDef {
                     Self::STACKPOPN_SIGNATURE,
                     move |args: &[wasmer::Value]| {
                         let n = wasm_value_to_mem_idx(args[0].clone());
-                        let mut allocator = allocator.lock().expect("stack_alloc failed to lock");
+                        let mut allocator =
+                            STACK_ALLOCATOR.lock().expect("stack_alloc failed to lock");
                         allocator.pop_n(n);
 
                         Ok(vec![])
