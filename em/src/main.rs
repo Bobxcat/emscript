@@ -133,6 +133,10 @@ static WASM_STORE: Lazy<Mutex<Option<Store>>> = Lazy::new(|| Mutex::new(None));
 
 pub struct WasmEnv {
     pub mem: Option<InternalStoreHandle<VMMemory>>,
+    /// The memory base is guaranteed to always be valid
+    ///
+    /// (see [VMMemoryDefinition])
+    base: *mut u8,
 }
 
 impl WasmEnv {
@@ -144,15 +148,22 @@ impl WasmEnv {
 
         self.mem.unwrap().get_mut(store.objects_mut())
     }
-    pub fn mem_def(
-        &self,
-        store: &mut MutexGuard<'static, Option<Store>>,
-    ) -> NonNull<VMMemoryDefinition> {
-        // let store = Self::store();
-        self.mem
+    pub const fn base(&self) -> *mut u8 {
+        self.base
+    }
+    pub const fn offset_to_ptr<T>(&self, offset: MemoryIndex) -> *mut T {
+        unsafe { self.base().add(offset as usize) as *mut T }
+    }
+    fn init(&mut self, mem: InternalStoreHandle<VMMemory>) {
+        self.mem = Some(mem);
+
+        let mut s = Self::store();
+        let mut mem_def = self
+            .mem
             .unwrap()
-            .get(store.as_mut().unwrap().objects_mut())
-            .vmmemory()
+            .get(s.as_mut().unwrap().objects_mut())
+            .vmmemory();
+        self.base = unsafe { mem_def.as_mut().base };
     }
 }
 
@@ -218,7 +229,15 @@ fn compile(
         // Define the imports
 
         // Get the environment needed for all the methods
-        let env = { FunctionEnv::new(store.as_mut().unwrap(), WasmEnv { mem: None }) };
+        let env = {
+            FunctionEnv::new(
+                store.as_mut().unwrap(),
+                WasmEnv {
+                    mem: None,
+                    base: std::ptr::null_mut(),
+                },
+            )
+        };
 
         // Populate `interface` with method implementations
         implement_interface_methods(&mut interface, store.as_mut().unwrap(), &env);
