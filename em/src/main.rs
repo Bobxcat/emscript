@@ -4,7 +4,7 @@
 
 // use core::slice::SlicePattern;
 use std::{
-    fs::File,
+    fs::{read_to_string, File},
     io::{Read, Write},
     path::PathBuf,
     ptr::NonNull,
@@ -21,7 +21,7 @@ use ir::IRAST;
 use once_cell::sync::Lazy;
 use parse::parse;
 use runtime::RuntimeCfg;
-use wabt::wat2wasm;
+use wabt::{wasm2wat, wat2wasm};
 // use runtime::RuntimeCfg;
 // use wabt::ReadBinaryOptions;
 use wasm::compile_irast;
@@ -36,6 +36,7 @@ use wasmer_vm::{InternalStoreHandle, LinearMemory, VMMemory};
 use crate::{
     interface::{compile_api, MethodImport, StdImport},
     memory::{WAllocatorDefault, STACK_SIZE},
+    runtime::OptLevel,
     token::tokenize,
     value::{
         custom_types::{insert_custom_type, str_to_type},
@@ -56,6 +57,7 @@ mod ast;
 mod c_ast;
 /// The implementation of a custom `LinearMemory` for
 mod em_mem;
+mod ident;
 mod interface;
 mod ir;
 mod memory;
@@ -180,7 +182,7 @@ unsafe impl Send for WasmEnv {}
 /// `emscript text` -> `Vec<Token>` -> `AST` -> `IRAST` -> `WIR` -> `WASMAST` -> `wasm text` -> `wasm binary`
 fn compile(
     raw: &str,
-    _cfg: RuntimeCfg,
+    cfg: RuntimeCfg,
     mut interface: InterfaceDef,
     store: Store,
     // memory: EmMemHandle,
@@ -214,17 +216,42 @@ fn compile(
     // (also, [wabt] doesn't verify to the same extent as `wasm-opt`, which makes it easier to create)
     let mut store = WasmEnv::store();
 
-    let wasm = &wat2wasm(wasm_txt)?;
+    let wasm = wat2wasm(wasm_txt)?;
 
     let wasm_path_preopt = &PathBuf::from_str("em_target/wasm/main_preopt.wasm")?;
-    File::create(&wasm_path_preopt)?.write_all(wasm)?;
+    File::create(&wasm_path_preopt)?.write_all(&wasm)?;
 
-    println!("=====Running unoptimized=====");
-    const ARGS: i32 = 100000;
+    let wasm_path_opt = &PathBuf::from_str("em_target/wasm/main.wasm")?;
+    OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path_opt)?;
+
+    let wasm_path_opt_txt = &PathBuf::from_str("em_target/wasm/main.wat")?;
+    File::create(&wasm_path_preopt)?.write_all(
+        wasm2wat(
+            File::open(wasm_path_opt)?
+                .bytes()
+                .map(|r| r.unwrap())
+                .collect::<Vec<_>>(),
+        )?
+        .as_bytes(),
+    )?;
+
+    if cfg.opt_level == OptLevel::Release {
+        let wasm = {
+            let mut f = File::open(wasm_path_opt)?;
+            let mut v = Vec::new();
+            f.read_to_end(&mut v)?;
+            v
+        };
+    }
+
+    println!("=====Length of wasm binary: {} bytes=====", wasm.len());
+
+    println!("=====Running=====");
+    const ARGS: i32 = 10000;
     // Run unoptimized
     {
         // Get a wasm module from `wasm_path_preopt`
-        let module = Module::new(store.as_ref().unwrap().engine(), wasm_txt)?;
+        let module = Module::new(store.as_ref().unwrap().engine(), wasm)?;
 
         // Define the imports
 
@@ -353,8 +380,8 @@ fn compile(
 
     println!("=====Creating and writing optimized binary=====");
 
-    let wasm_path_opt = &PathBuf::from_str("em_target/wasm/main.wasm")?;
-    OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path_opt)?;
+    // let wasm_path_opt = &PathBuf::from_str("em_target/wasm/main.wasm")?;
+    // OptimizationOptions::new_opt_level_4().run(wasm_path_preopt, wasm_path_opt)?;
 
     todo!()
 }

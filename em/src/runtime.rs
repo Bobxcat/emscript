@@ -1,14 +1,13 @@
 use std::{
     fmt::Display,
     fs::{canonicalize, DirBuilder},
-    io::{Write},
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
 
 use anyhow::bail;
 // use wasm_opt::OptimizationOptions;
-
 
 use crate::{
     ast::{ASTNode, StringContext},
@@ -43,7 +42,7 @@ pub enum Dependency {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptLevel {
     NoOpt,
     Debug,
